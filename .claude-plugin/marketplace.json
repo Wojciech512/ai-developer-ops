@@ -1,0 +1,11 @@
+{
+  "name": "ai-developer-ops",
+  "owner": { "name": "Wojciech512" },
+  "plugins": [
+    {
+      "name": "ai-developer-ops",
+      "source": "./",
+      "description": "Spec-driven, harnessed, double-reviewed development process for Claude Code and Codex."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "ai-developer-ops",
+  "version": "0.1.0",
+  "description": "Spec-driven, harnessed, double-reviewed development process for Claude Code and Codex.",
+  "author": { "name": "Wojciech512" },
+  "repository": "https://github.com/Wojciech512/ai-developer-ops",
+  "license": "MIT",
+  "keywords": ["sdd", "openspec", "superpowers", "codex", "review", "playwright"]
+}

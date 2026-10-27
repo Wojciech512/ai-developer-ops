@@ -1,0 +1,33 @@
+# Stos (zatwierdzony)
+- https://github.com/Fission-AI/OpenSpec
+- https://github.com/obra/superpowers
+- https://github.com/openai/codex-plugin-cc
+- https://github.com/microsoft/playwright-cli
+- https://playwright.dev/docs/intro
+- https://github.com/microsoft/playwright-mcp (opcjonalnie)
+- https://github.com/Dunqing/claude-codex-bridge (opcjonalnie, kierunek Codex -> Claude)
+- https://gist.github.com/graykode/06ea008b11ec331fd36f9a9ba53b252a (wzorzec plan-critique)
+# Claude Code docs
+- https://code.claude.com/docs/en/best-practices.md
+- https://code.claude.com/docs/en/code-review-local.md
+- https://code.claude.com/docs/en/ultrareview.md
+- https://code.claude.com/docs/en/code-review.md
+- https://code.claude.com/docs/en/sub-agents.md
+- https://code.claude.com/docs/en/agent-teams.md
+- https://code.claude.com/docs/en/hooks-guide.md
+- https://code.claude.com/docs/en/skills.md
+- https://code.claude.com/docs/en/memory.md
+- https://code.claude.com/docs/en/worktrees.md
+- https://code.claude.com/docs/en/agent-view.md
+- https://code.claude.com/docs/en/goal.md
+- https://code.claude.com/docs/en/claude-projects.md
+- https://code.claude.com/docs/en/security-guidance.md
+- https://code.claude.com/docs/en/plugins/create.md
+- https://code.claude.com/docs/en/plugins/create-marketplace.md
+# Codex docs
+- https://github.com/openai/codex
+- https://developers.openai.com/codex/skills.md
+- https://learn.chatgpt.com/docs/agent-configuration/subagents
+- https://learn.chatgpt.com/codex/hooks
+- https://learn.chatgpt.com/codex/code-review
+- https://developers.openai.com/api/docs/guides/latest-model
