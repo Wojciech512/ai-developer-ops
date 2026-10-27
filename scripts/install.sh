@@ -20,9 +20,11 @@ if [[ "$VARIANT" == *codex* ]]; then
   mkdir -p ~/.agents/skills ~/.codex/agents
   for s in "$ROOT"/skills/*/; do ln -sfn "${s%/}" ~/.agents/skills/"$(basename "$s")"; done
   for t in "$ROOT"/codex/agents/*.toml; do ln -sfn "$t" ~/.codex/agents/"$(basename "$t")"; done
-  if [ -f ~/.codex/config.toml ] && grep -q "ai-developer-ops" ~/.codex/config.toml; then :; else
-    { echo; echo "# ai-developer-ops"; cat "$ROOT/codex/config.snippet.toml"; } >> ~/.codex/config.toml
-    echo "Appended defaults to ~/.codex/config.toml (review it)."
+  if [ ! -f ~/.codex/config.toml ]; then
+    cp "$ROOT/codex/config.snippet.toml" ~/.codex/config.toml
+    echo "Created ~/.codex/config.toml from snippet."
+  elif ! grep -q '^\[agents\]' ~/.codex/config.toml; then
+    echo "Merge $ROOT/codex/config.snippet.toml into ~/.codex/config.toml by hand: top-level keys first, then [agents]."
   fi
 fi
 if [ "$VARIANT" = claude-codex ]; then
