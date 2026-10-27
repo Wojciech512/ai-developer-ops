@@ -33,4 +33,4 @@ if [ "$VARIANT" = claude-codex ]; then
   claude plugin install codex@openai-codex || true
 fi
 mkdir -p ~/.ai-developer-ops-state && echo "$VARIANT" > ~/.ai-developer-ops-state/variant
-echo "Done. In a project run: /init-ai-developer-ops (Claude) or \$init-ai-developer-ops (Codex)."
+echo "Done. In a project run: /ai-developer-ops:init (Claude) or \$init (Codex)."

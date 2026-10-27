@@ -1,4 +1,4 @@
-# ai-developer-ops gates. /init-ai-developer-ops fills the TODO targets for this stack.
+# ai-developer-ops gates. /ai-developer-ops:init fills the TODO targets for this stack.
 check: lint typecheck test
 lint: ; @echo "TODO: lint"
 typecheck: ; @echo "TODO: typecheck"

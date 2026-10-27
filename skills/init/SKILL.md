@@ -1,5 +1,5 @@
 ---
-name: init-ai-developer-ops
+name: init
 description: Initialize a repository for the ai-developer-ops process in one run. Use once per repository, right after cloning.
 disable-model-invocation: true
 ---

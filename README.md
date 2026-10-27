@@ -18,7 +18,7 @@ To repo jest pluginem Claude Code (`.claude-plugin/`) i paczką skilli w standar
 
 ## Inicjalizacja projektu
     git clone <projekt> && cd <projekt>
-    claude   ->  /init-ai-developer-ops        (Codex: codex -> $init-ai-developer-ops)
+    claude   ->  /ai-developer-ops:init        (Codex: codex -> $init)
 
 ## Proces
 spec (OpenSpec) -> plan i tasks -> wykonanie w harnessie, jedno zadanie na świeży kontekst -> `make check` w hookach -> review (spec, poprawność, security, drugi model) -> PR/MR. Człowiek decyduje trzy razy: propose, plan, merge.
