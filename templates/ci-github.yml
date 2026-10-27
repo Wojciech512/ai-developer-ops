@@ -1,0 +1,14 @@
+name: ai-check
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: echo "TODO: install toolchain for this repo (node/python/go/...)"
+      - name: Gate
+        run: make check

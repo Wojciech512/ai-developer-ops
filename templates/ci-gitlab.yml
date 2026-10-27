@@ -1,0 +1,9 @@
+stages: [check]
+ai-check:
+  stage: check
+  image: ubuntu:24.04
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq make git
+    - echo "TODO: install toolchain for this repo"
+  script:
+    - make check

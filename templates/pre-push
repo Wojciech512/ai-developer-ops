@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Tool-agnostic gate: no push without a green `make check`.
+set -e
+if [ -f Makefile ] && grep -q '^check:' Makefile; then make -s check; fi
