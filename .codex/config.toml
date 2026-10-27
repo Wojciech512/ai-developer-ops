@@ -1,0 +1,8 @@
+# ai-developer-ops defaults. Top-level keys must stay above any [table].
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
+
+[agents]
+max_concurrent_threads_per_session = 6
+default_subagent_model = "gpt-6.1-sol"
+default_subagent_reasoning_effort = "high"

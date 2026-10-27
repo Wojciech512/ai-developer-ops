@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make *)", "Bash(git *)", "Bash(gh *)", "Bash(glab *)", "Bash(codex *)",
+      "Bash(openspec *)", "Bash(playwright-cli *)",
+      "Bash(npm *)", "Bash(pnpm *)", "Bash(uv *)", "Bash(cargo *)", "Bash(go *)"
+    ],
+    "deny": [
+      "Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)",
+      "Bash(git push --force*)", "Bash(git push -f*)"
+    ]
+  },
+  "env": { "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet" }
+}
