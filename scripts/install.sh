@@ -15,6 +15,7 @@ if [[ "$VARIANT" == *claude* ]]; then
   claude plugin install ai-developer-ops@ai-developer-ops || true
   claude plugin marketplace add obra/superpowers-marketplace || true
   claude plugin install superpowers@superpowers-marketplace || true
+  claude plugin install security-guidance@claude-plugins-official || true
 fi
 if [[ "$VARIANT" == *codex* ]]; then
   mkdir -p ~/.agents/skills ~/.codex/agents
