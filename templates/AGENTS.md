@@ -12,6 +12,7 @@
 - Nie refaktoruj poza zakresem zadania. Migracje, lockfile'y, CI: tylko za zgodą użytkownika.
 - Dowody, nie deklaracje: wynik `make check` do `openspec/changes/<id>/evidence.md` i do PR/MR.
 - Przekazanie między narzędziami: `openspec/changes/<id>/handoff.md` (owner, status, next_action).
+- Przed użyciem API zewnętrznej biblioteki sprawdź dokumentację jej wersji z lockfile'a przez agenta docs-researcher (Codex: docs_researcher). Nie zgaduj sygnatur. Najpierw llms.txt dostawcy, potem Context7.
 
 ## Format review (obowiązuje każdy review, także /code-review i codex review)
 BLOCKER / WARN / NOTE z `plik:linia`. Na końcu werdykt: PASS albo FAIL. Tylko poprawność i wymagania. Bez uwag o stylu.

@@ -7,6 +7,8 @@
 - https://github.com/microsoft/playwright-mcp (opcjonalnie)
 - https://github.com/Dunqing/claude-codex-bridge (opcjonalnie, kierunek Codex -> Claude)
 - https://gist.github.com/graykode/06ea008b11ec331fd36f9a9ba53b252a (wzorzec plan-critique)
+- https://github.com/upstash/context7
+- https://context7.com/docs/overview.md
 # Claude Code docs
 - https://code.claude.com/docs/en/best-practices.md
 - https://code.claude.com/docs/en/code-review-local.md

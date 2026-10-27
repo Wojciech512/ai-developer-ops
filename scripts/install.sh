@@ -27,6 +27,30 @@ ensure_marketplace() { # <name> <source>
   fi
 }
 
+# Remove dangling symlinks in <dir> that point inside $ROOT; leave everything else alone.
+clean_dangling_links() { # <dir>
+  local link
+  for link in "$1"/* "$1"/.*; do
+    [ -L "$link" ] || continue
+    case "$(readlink "$link")" in
+      "$ROOT"/*) [ -e "$link" ] || { rm -f "$link"; echo "Removed dangling symlink: $link"; } ;;
+    esac
+  done
+}
+
+# Create/refresh a symlink; never touch a real (non-symlink) file or directory at the destination.
+link_file() { # <target> <dest>
+  if [ ! -e "$1" ]; then
+    echo "warn: link target $1 does not exist; skipping"
+    return 0
+  fi
+  if [ -e "$2" ] && [ ! -L "$2" ]; then
+    echo "warn: $2 exists and is not a symlink; skipping link to $1"
+    return 0
+  fi
+  ln -sfn "$1" "$2" || echo "warn: could not link $2 -> $1"
+}
+
 # Refresh the marketplace, install the plugin, update it when already installed.
 install_or_update_plugin() { # <plugin> <marketplace>
   local plugin="$1" marketplace="$2" out rc=0
@@ -46,20 +70,30 @@ if [[ "$VARIANT" == *claude* ]]; then
   install_or_update_plugin ai-developer-ops ai-developer-ops
   install_or_update_plugin superpowers superpowers-marketplace
   install_or_update_plugin security-guidance claude-plugins-official
+  mkdir -p ~/.claude/agents
+  clean_dangling_links ~/.claude/agents
+  for a in "$ROOT"/templates/agents/*.md; do link_file "$a" ~/.claude/agents/"$(basename "$a")"; done
+  # Context7 for Claude: skip when already present as a plugin or an MCP server.
+  if ! claude plugin list 2>/dev/null | grep -i context7 >/dev/null \
+     && ! claude mcp list 2>/dev/null | grep -i context7 >/dev/null; then
+    # ctx7 setup is interactive (mode prompt + OAuth); without a TTY feed it /dev/null so it cannot hang.
+    if [ -t 0 ]; then
+      npx -y ctx7 setup --claude || true
+    else
+      npx -y ctx7 setup --claude </dev/null || true
+    fi
+    if ! claude mcp list 2>/dev/null | grep -i context7 >/dev/null \
+       && ! claude plugin list 2>/dev/null | grep -i context7 >/dev/null; then
+      echo "warn: Context7 setup for Claude skipped; run: npx ctx7 setup --claude"
+    fi
+  fi
 fi
 if [[ "$VARIANT" == *codex* ]]; then
   mkdir -p ~/.agents/skills ~/.codex/agents
-  # Remove dangling symlinks that point inside $ROOT; leave everything else alone.
-  for dir in ~/.agents/skills ~/.codex/agents; do
-    for link in "$dir"/* "$dir"/.*; do
-      [ -L "$link" ] || continue
-      case "$(readlink "$link")" in
-        "$ROOT"/*) [ -e "$link" ] || { rm -f "$link"; echo "Removed dangling symlink: $link"; } ;;
-      esac
-    done
-  done
-  for s in "$ROOT"/skills/*/; do ln -sfn "${s%/}" ~/.agents/skills/"$(basename "$s")"; done
-  for t in "$ROOT"/codex/agents/*.toml; do ln -sfn "$t" ~/.codex/agents/"$(basename "$t")"; done
+  clean_dangling_links ~/.agents/skills
+  clean_dangling_links ~/.codex/agents
+  for s in "$ROOT"/skills/*/; do link_file "${s%/}" ~/.agents/skills/"$(basename "$s")"; done
+  for t in "$ROOT"/codex/agents/*.toml; do link_file "$t" ~/.codex/agents/"$(basename "$t")"; done
   if [ ! -f ~/.codex/config.toml ]; then
     cp "$ROOT/codex/config.snippet.toml" ~/.codex/config.toml
     echo "Created ~/.codex/config.toml from snippet."
@@ -70,6 +104,15 @@ if [[ "$VARIANT" == *codex* ]]; then
       || true
   else
     echo "Merge $ROOT/codex/config.snippet.toml into ~/.codex/config.toml by hand: top-level keys first, then [agents]."
+  fi
+  # Context7 for Codex: prefer the plugin marketplace, fall back to a plain MCP entry.
+  if ! codex mcp list 2>/dev/null | grep -i context7 >/dev/null; then
+    if codex plugin marketplace add upstash/context7 && codex plugin add context7@context7-marketplace; then
+      echo "Context7 installed via Codex plugin marketplace."
+    else
+      codex mcp add context7 -- npx -y @upstash/context7-mcp \
+        || echo "warn: Context7 for Codex skipped; run: codex mcp add context7 -- npx -y @upstash/context7-mcp"
+    fi
   fi
 fi
 if [ "$VARIANT" = claude-codex ]; then

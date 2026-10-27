@@ -13,6 +13,7 @@
 | Security | plugin Anthropic security | Codex Security plugin |
 | Debugging | opus xhigh | gpt-6-astra high |
 | Triage, chores, automations | haiku / sonnet low | gpt-6-luna |
+| Dokumentacja bibliotek | docs-researcher: sonnet low | docs_researcher: gpt-6-luna high |
 
 Zasady:
 - Autor i reviewer: inny model albo inna rodzina modeli.
