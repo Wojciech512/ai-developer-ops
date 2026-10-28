@@ -14,12 +14,14 @@
 - Weryfikacja składni to nie weryfikacja semantyki. To, że narzędzie przyjmuje argument, nie znaczy, że to właściwy argument: `ops-review` przyjmuje `HEAD~1..HEAD`, ale ten zakres gubi niezacommitowany fix; `@nazwa` jest poprawnym mentionem — pliku, nie agenta (agent to `@agent-nazwa`). Sprawdzaj, co komenda robi, nie czy się parsuje.
 - Przekazanie między narzędziami: `openspec/changes/<id>/handoff.md` (owner, status, next_action).
 - Przed użyciem API zewnętrznej biblioteki sprawdź dokumentację jej wersji z lockfile'a przez agenta docs-researcher (Codex: docs_researcher). Nie zgaduj sygnatur. Najpierw llms.txt dostawcy, potem Context7.
+- Agent nie pushuje na żadne zdalne, nie otwiera ani nie merguje PR/MR, nie tworzy release'ów. Wynikiem pracy agenta jest commit w lokalnym repo; push, PR/MR i merge wykonuje człowiek. Komentarz z wynikiem review na istniejącym PR/MR jest dozwolony.
 
 ## Format review (obowiązuje każdy review, także /code-review i codex review)
 BLOCKER / WARN / NOTE z `plik:linia`. Na końcu werdykt: PASS albo FAIL. Tylko poprawność i wymagania. Bez uwag o stylu.
 
 ## Definition of Done
-1. `make check` zielone. 2. Review bez BLOCKER. 3. evidence.md uzupełnione. 4. Spec zgodny z kodem (`/opsx:verify`). 5. PR/MR z szablonu.
+Agent: 1. `make check` zielone. 2. Review bez BLOCKER. 3. evidence.md uzupełnione. 4. Spec zgodny z kodem (`/opsx:verify`). 5. Treść PR/MR przygotowana w `openspec/changes/<id>/pr-body.md`, zmiana zacommitowana lokalnie.
+Człowiek: push gałęzi, otwarcie PR/MR z szablonu, merge.
 
 ## Konwencje
 - Gałęzie: feat/<id>, fix/<id>. Commity: Conventional Commits.

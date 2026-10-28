@@ -1,5 +1,5 @@
 owner: claude | codex | human
-status: proposed | planned | implementing | in-review | blocked | done
+status: proposed | planned | implementing | ready-to-push | in-review | blocked | done
 branch: feat/<id>
 next_action: <jedno zdanie: co ma zrobić owner>
 blockers: none

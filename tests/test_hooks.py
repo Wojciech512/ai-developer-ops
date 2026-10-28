@@ -66,6 +66,46 @@ class ProtectPaths(unittest.TestCase):
         r = self.run_hook("{}")
         self.assertEqual(r.returncode, 0)
 
+    def test_blocks_deny_push_script(self):
+        r = self.run_hook(tool_input("scripts/deny-push.sh"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_blocks_hooks_json(self):
+        r = self.run_hook(tool_input("hooks/hooks.json"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_blocks_claude_settings(self):
+        r = self.run_hook(tool_input(".claude/settings.json"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_blocks_templates_settings(self):
+        r = self.run_hook(tool_input("templates/settings.json"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_override_env_allows_deny_push_script(self):
+        r = self.run_hook(
+            tool_input("scripts/deny-push.sh"), {"AIDEVOPS_ALLOW_PROTECTED": "1"}
+        )
+        self.assertEqual(r.returncode, 0)
+
+    def test_override_env_allows_hooks_json(self):
+        r = self.run_hook(
+            tool_input("hooks/hooks.json"), {"AIDEVOPS_ALLOW_PROTECTED": "1"}
+        )
+        self.assertEqual(r.returncode, 0)
+
+    def test_override_env_allows_claude_settings(self):
+        r = self.run_hook(
+            tool_input(".claude/settings.json"), {"AIDEVOPS_ALLOW_PROTECTED": "1"}
+        )
+        self.assertEqual(r.returncode, 0)
+
+    def test_override_env_allows_templates_settings(self):
+        r = self.run_hook(
+            tool_input("templates/settings.json"), {"AIDEVOPS_ALLOW_PROTECTED": "1"}
+        )
+        self.assertEqual(r.returncode, 0)
+
 
 class DenyPush(unittest.TestCase):
     def run_hook(self, stdin, env=None):
