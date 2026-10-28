@@ -5,6 +5,7 @@ PATH is narrowed to a stub dir + /usr/bin:/bin so the detected variant
 controlled by the test, on macOS and ubuntu runners alike.
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -49,14 +50,26 @@ def run_script(script, env, cwd=None, stdin=None):
 RENDER_ARCH = SCRIPTS / "render_arch.py"
 
 
-def run_py(args, cwd=None):
+def run_py(args, cwd=None, env=None):
     """Run scripts/render_arch.py with this interpreter."""
     return subprocess.run(
         [sys.executable, str(RENDER_ARCH), *[str(a) for a in args]],
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
     )
+
+
+def env_without_git():
+    """A copy of the environment with git's repo pointers removed.
+
+    Git hooks export GIT_DIR, so a subprocess started from a hook finds the
+    repository even when its cwd is outside one. A test that needs
+    `git rev-parse` to fail has to strip those, or it passes from the shell
+    and fails under `git push`.
+    """
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 def model_fixture(**overrides):

@@ -14,6 +14,7 @@ import unittest
 
 from tests.util import (
     REPO,
+    env_without_git,
     fixture_root,
     model_fixture,
     run_py,
@@ -939,7 +940,7 @@ class Atomic(unittest.TestCase):
         outside.mkdir()
         r = run_py(["all", "--model", model_path, "--puml-out", puml,
                     "--md-out", md, "--root", root, "--scope", "x"],
-                   cwd=outside)
+                   cwd=outside, env=env_without_git())
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertEqual(puml.read_text(), self.SENTINEL_PUML)
         self.assertEqual(md.read_text(), self.SENTINEL_MD)
