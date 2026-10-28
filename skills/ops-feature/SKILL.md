@@ -11,5 +11,5 @@ Three human gates: proposal, plan, merge. Stop at each one and wait.
 4. Implement in a git worktree for this change. Claude: superpowers:using-git-worktrees, then superpowers:subagent-driven-development with tasks.md as the plan (never create a second plan); TDD inside each task. Codex: `$openspec-apply` with the worker agent, one task per thread. After each task `make check` must be green. For any third-party API, the implementer asks docs-researcher first (Codex: docs_researcher).
 5. Verify: `make e2e`; use playwright-cli for the verification steps in the spec; record results in evidence.md.
 6. Review: run ops-review for <id>. The owner fixes every BLOCKER and WARN, then reruns until PASS.
-7. Ship: run ops-ship for <id>. STOP: the user merges.
+7. Ship: run ops-ship for <id>. STOP: the user pushes the branch, opens the PR/MR, and merges — the agent's job ends at a local commit.
 8. After merge: `/opsx:archive <id>`; add one lesson to AGENTS.md if there is one.

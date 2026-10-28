@@ -3,8 +3,10 @@
 Exit 2 blocks the tool call / turn; exit 0 lets it through.
 """
 import json
+import shutil
 import subprocess
 import unittest
+from pathlib import Path
 
 from tests.util import SCRIPTS, git_repo, run_script, stub_env, temp_dir
 
@@ -18,9 +20,19 @@ def command_input(cmd):
 
 
 def no_jq_env(tmp):
-    """stub_env with jq hidden from PATH (jq lives in /usr/bin on this box)."""
+    """stub_env with jq's directory removed from PATH.
+
+    Finds jq via shutil.which instead of assuming /usr/bin: on a machine
+    where jq lives elsewhere (e.g. /opt/homebrew/bin), hardcoding
+    /usr/bin would silently leave jq reachable and the no-jq/fail-closed
+    path would never actually be exercised.
+    """
+    jq_path = shutil.which("jq")
+    if jq_path is None:
+        return None
+    jq_dir = str(Path(jq_path).parent)
     env = stub_env(tmp)
-    kept = [p for p in env["PATH"].split(":") if p != "/usr/bin"]
+    kept = [p for p in env["PATH"].split(":") if p != jq_dir]
     env["PATH"] = ":".join(kept)
     return env
 
@@ -195,6 +207,115 @@ class DenyPush(unittest.TestCase):
         self.assertIn("commit", r.stderr.lower())
         self.assertIn("human", r.stderr.lower())
 
+    # --- fix-wave: 18 confirmed bypasses, must now block ---
+
+    def test_blocks_bypass01_git_dash_c_dquote_path_push(self):
+        r = self.run_hook(command_input('git -C "/repo path" push origin HEAD:main'))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass02_git_dash_c_squote_path_push(self):
+        r = self.run_hook(command_input("git -C '/repo path' push origin HEAD:main"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass03_gh_pr_double_space_create(self):
+        r = self.run_hook(command_input("gh pr  create"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass04_glab_mr_tab_merge(self):
+        r = self.run_hook(command_input("glab mr\tmerge 3"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass05_gh_global_repo_flag_pr_create(self):
+        r = self.run_hook(command_input("gh --repo owner/repo pr create --title x"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass06_gh_global_dash_r_release_create(self):
+        r = self.run_hook(command_input("gh -R owner/repo release create v1"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass07_glab_global_repo_flag_mr_create(self):
+        r = self.run_hook(command_input("glab --repo g/p mr create"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass08_gh_global_repo_flag_api_post(self):
+        r = self.run_hook(
+            command_input("gh --repo o/r api --method POST /repos/o/r/git/refs")
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass09_paren_wrapped_push(self):
+        r = self.run_hook(command_input("(git push)"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass10_dollar_paren_push(self):
+        r = self.run_hook(command_input("$(git push)"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass11_paren_wrapped_dash_c_push(self):
+        r = self.run_hook(command_input("(git -C /tmp push)"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass12_env_wrapped_push(self):
+        r = self.run_hook(command_input("env GIT_SSH_COMMAND=ssh git push"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass13_timeout_wrapped_push(self):
+        r = self.run_hook(command_input("timeout 30 git push origin main"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass14_nice_wrapped_push(self):
+        r = self.run_hook(command_input("nice git push"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass15_exec_wrapped_push(self):
+        r = self.run_hook(command_input("exec git push"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass16_gh_api_implicit_post_dash_f(self):
+        r = self.run_hook(command_input("gh api /repos/o/r/releases -f tag_name=v1"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass17_gh_api_implicit_post_input(self):
+        r = self.run_hook(
+            command_input("gh api /repos/o/r/git/refs --input body.json")
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_bypass18_gh_api_compact_dash_x_post(self):
+        r = self.run_hook(command_input("gh api -XPOST /repos/o/r/git/refs"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    # --- fix-wave: additional required cases ---
+
+    def test_blocks_gh_api_method_equals_post(self):
+        r = self.run_hook(
+            command_input("gh api --method=POST /repos/o/r/git/refs")
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_allows_git_log_grep_dquoted_git_push(self):
+        r = self.run_hook(command_input('git log --grep="git push"'))
+        self.assertEqual(r.returncode, 0)
+
     # --- passing: local-only or non-write ---
 
     def test_allows_git_commit(self):
@@ -250,6 +371,8 @@ class DenyPush(unittest.TestCase):
     def test_blocks_when_no_jq_and_risky(self):
         tmp = temp_dir(self)
         env = no_jq_env(tmp)
+        if env is None:
+            self.skipTest("jq not found on this machine; cannot simulate its absence")
         r = self.run_hook(command_input("git push"), env=env)
         self.assertEqual(r.returncode, 2)
         self.assertTrue(r.stderr)
@@ -257,6 +380,8 @@ class DenyPush(unittest.TestCase):
     def test_allows_when_no_jq_and_mundane(self):
         tmp = temp_dir(self)
         env = no_jq_env(tmp)
+        if env is None:
+            self.skipTest("jq not found on this machine; cannot simulate its absence")
         r = self.run_hook(command_input("make check"), env=env)
         self.assertEqual(r.returncode, 0)
 

@@ -7,7 +7,6 @@
     ],
     "deny": [
       "Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)",
-      "Bash(git push --force*)", "Bash(git push -f*)",
       "Bash(git push*)", "Bash(gh pr create*)", "Bash(gh pr merge*)",
       "Bash(gh release create*)", "Bash(glab mr create*)", "Bash(glab mr merge*)"
     ]
