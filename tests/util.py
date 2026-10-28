@@ -4,8 +4,10 @@ PATH is narrowed to a stub dir + /usr/bin:/bin so the detected variant
 (claude/codex on PATH) and optional tools (playwright-cli) are fully
 controlled by the test, on macOS and ubuntu runners alike.
 """
+import json
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -42,6 +44,65 @@ def run_script(script, env, cwd=None, stdin=None):
         capture_output=True,
         text=True,
     )
+
+
+RENDER_ARCH = SCRIPTS / "render_arch.py"
+
+
+def run_py(args, cwd=None):
+    """Run scripts/render_arch.py with this interpreter."""
+    return subprocess.run(
+        [sys.executable, str(RENDER_ARCH), *[str(a) for a in args]],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+    )
+
+
+def model_fixture(**overrides):
+    """Minimal valid model from design.md, with top-level keys overridable."""
+    model = {
+        "title": "fixture",
+        "components": [
+            {"id": "Developer", "label": "developer",
+             "layer": "actor", "path": None},
+            {"id": "Installer", "label": "install.sh",
+             "layer": "api", "path": "scripts/install.sh"},
+        ],
+        "flows": [
+            {"id": "main", "label": "Instalacja", "kind": "main"},
+        ],
+        "interactions": [
+            {"flow": "main", "from": "Developer", "to": "Installer",
+             "verb": "uruchamia", "op": "install.sh", "seq": 10},
+        ],
+    }
+    model.update(overrides)
+    return model
+
+
+def fixture_root(tmp: Path, model):
+    """Create an empty file for every non-null component path in model.
+
+    Proves the renderer needs the paths to exist but never reads them.
+    """
+    root = tmp / "root"
+    root.mkdir(exist_ok=True)
+    for component in model.get("components", []):
+        path = component.get("path")
+        if not path:
+            continue
+        target = root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.touch()
+    return root
+
+
+def write_model(tmp: Path, model, name="architecture.model.json"):
+    """Write model as JSON under tmp and return its path."""
+    path = tmp / name
+    path.write_text(json.dumps(model, ensure_ascii=False, indent=2))
+    return path
 
 
 def git_repo(tmp: Path, env, remote=None):
