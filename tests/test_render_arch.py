@@ -1410,5 +1410,181 @@ class TemplateMakefile(unittest.TestCase):
         self.assertIn("py_compile", (REPO / "Makefile").read_text())
 
 
+class SkillDocument(unittest.TestCase):
+    """skills/ops-discover/SKILL.md must state the rules it relies on."""
+
+    def skill(self):
+        return (REPO / "skills/ops-discover/SKILL.md").read_text()
+
+    def test_skill_declares_its_frontmatter(self):
+        text = self.skill()
+        for field in ("name: ops-discover", "description:",
+                      "disable-model-invocation: true", "argument-hint:"):
+            self.assertIn(field, text)
+
+    def test_skill_resolves_the_renderer_from_the_tool_root(self):
+        text = self.skill()
+        self.assertIn("CLAUDE_PLUGIN_ROOT", text)
+        self.assertIn("~/.ai-developer-ops", text)
+        self.assertIn('"$ROOT/scripts/render_arch.py"', text)
+
+    def test_skill_names_both_recon_subagents(self):
+        text = self.skill()
+        self.assertIn("Explore", text)
+        self.assertIn("explorer", text)
+
+    def test_skill_lists_all_five_recon_areas(self):
+        text = self.skill().lower()
+        for area in ("entry point", "responsibilities", "data flow",
+                     "integration", "background job"):
+            self.assertIn(area, text)
+
+    def test_skill_lists_every_layer_of_the_vocabulary(self):
+        text = self.skill()
+        for layer in ("actor", "ui", "api", "service", "repository",
+                      "data", "integration"):
+            self.assertIn(f"`{layer}`", text)
+
+    def test_skill_validates_before_rendering(self):
+        text = self.skill()
+        self.assertLess(text.index("validate --model"),
+                        text.index("all --model"))
+
+    def test_skill_states_the_scope_too_narrow_stop(self):
+        self.assertIn("scope too narrow", self.skill())
+
+    def test_skill_states_that_a_rename_is_not_tracked(self):
+        self.assertIn("rename", self.skill().lower())
+
+    def test_skill_documents_the_manual_markers(self):
+        text = self.skill()
+        self.assertIn("' manual", text)
+        self.assertIn("' manual-orphan", text)
+
+    def test_skill_gates_onboarding_behind_the_flag(self):
+        text = self.skill()
+        onboarding = [ln for ln in text.splitlines() if "ONBOARDING.md" in ln]
+        self.assertTrue(onboarding)
+        self.assertIn("--onboarding", onboarding[0])
+        self.assertIn("200", onboarding[0])
+
+    def test_skill_requires_reporting_the_project_commands(self):
+        # init consumes these to fill its Makefile and AGENTS.md TODOs.
+        text = self.skill()
+        self.assertIn("init", text)
+        for word in ("build", "test", "lint", "run"):
+            self.assertIn(word, text)
+
+
+class SkillRegistration(unittest.TestCase):
+    """The new skill needs no manifest edit to be installed.
+
+    Structural, not behavioural: scripts/install.sh self-updates and
+    installs global npm packages, so running it from a test would reach
+    outside the repo. What these assert is that the install loop is a
+    glob over skills/*/ and that this skill matches it.
+    """
+
+    def test_install_symlinks_every_skill_directory(self):
+        text = (REPO / "scripts/install.sh").read_text()
+        loop = [ln for ln in text.splitlines()
+                if 'skills/*/' in ln and "link_file" in ln]
+        self.assertEqual(len(loop), 1, "expected one skills/*/ link loop")
+        self.assertIn("agents/skills", loop[0])
+
+    def test_skill_directory_matches_the_install_glob(self):
+        directory = REPO / "skills/ops-discover"
+        self.assertTrue(directory.is_dir())
+        self.assertTrue((directory / "SKILL.md").is_file())
+
+    def test_plugin_manifest_does_not_enumerate_skills(self):
+        # Claude discovers skills/ from the plugin root; an enumeration
+        # would be a second place to forget to update.
+        manifest = json.loads(
+            (REPO / ".claude-plugin/plugin.json").read_text())
+        self.assertNotIn("skills", manifest)
+
+
+class SyntheticRepo(unittest.TestCase):
+    """The skill must work in a project holding none of the tool's scripts."""
+
+    def build(self):
+        tmp = temp_dir(self)
+        project = tmp / "project"
+        (project / "src").mkdir(parents=True)
+        (project / "src/entry.py").write_text("# entry point\n")
+        (project / "src/service.py").write_text("# service\n")
+        (project / "src/store.py").write_text("# store\n")
+        model = {
+            "title": "synthetic",
+            "components": [
+                {"id": "User", "label": "user", "layer": "actor",
+                 "path": None},
+                {"id": "Entry", "label": "entry", "layer": "api",
+                 "path": "src/entry.py"},
+                {"id": "Service", "label": "service", "layer": "service",
+                 "path": "src/service.py"},
+                {"id": "Store", "label": "store", "layer": "data",
+                 "path": "src/store.py"},
+            ],
+            "flows": [{"id": "main", "label": "Zapytanie", "kind": "main"}],
+            "interactions": [
+                {"flow": "main", "from": "User", "to": "Entry",
+                 "verb": "wysyla", "op": "request", "seq": 10},
+                {"flow": "main", "from": "Entry", "to": "Service",
+                 "verb": "wola", "op": "handle", "seq": 20},
+                {"flow": "main", "from": "Service", "to": "Store",
+                 "verb": "czyta", "op": "record", "seq": 30},
+            ],
+        }
+        docs = project / "docs"
+        docs.mkdir()
+        return project, write_model(docs, model)
+
+    def test_synthetic_repo_holds_no_tool_scripts(self):
+        project, _ = self.build()
+        self.assertFalse((project / "scripts").exists())
+
+    def test_synthetic_repo_validates_and_renders_both_documents(self):
+        project, model_path = self.build()
+        docs = project / "docs"
+        r = run_py(["validate", "--model", model_path, "--root", project])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = run_py(["all", "--model", model_path,
+                    "--puml-out", docs / "architecture.puml",
+                    "--md-out", docs / "ARCHITECTURE.md",
+                    "--root", project, "--scope", "caly projekt",
+                    "--date", "2020-01-02", "--commit", "deadbee"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((docs / "architecture.puml").exists())
+        self.assertTrue((docs / "ARCHITECTURE.md").exists())
+
+    def test_synthetic_repo_writes_only_inside_docs(self):
+        project, model_path = self.build()
+        docs = project / "docs"
+        before = {p.relative_to(project).as_posix()
+                  for p in project.rglob("*") if p.is_file()}
+        run_py(["all", "--model", model_path,
+                "--puml-out", docs / "architecture.puml",
+                "--md-out", docs / "ARCHITECTURE.md",
+                "--root", project, "--scope", "x",
+                "--date", "2020-01-02", "--commit", "deadbee"])
+        after = {p.relative_to(project).as_posix()
+                 for p in project.rglob("*") if p.is_file()}
+        for created in after - before:
+            self.assertTrue(created.startswith("docs/"), created)
+
+    def test_synthetic_repo_legend_cites_its_real_files(self):
+        project, model_path = self.build()
+        docs = project / "docs"
+        run_py(["md", "--model", model_path, "--out", docs / "ARCHITECTURE.md",
+                "--root", project, "--scope", "x", "--date", "2020-01-02",
+                "--commit", "deadbee"])
+        text = (docs / "ARCHITECTURE.md").read_text()
+        for path in ("src/entry.py", "src/service.py", "src/store.py"):
+            self.assertIn(f"`{path}`", text)
+            self.assertTrue((project / path).exists())
+
+
 if __name__ == "__main__":
     unittest.main()
