@@ -20,5 +20,5 @@
 ## Ostatnia aktualizacja
 
 - Data: 2026-10-28
-- Zakres: caly repozytorium, dogfooding zmiany ops-discover
-- Commit: `6cb3852`
+- Zakres: odswiezenie po zmianie ops-discover
+- Commit: `28a5cd1`
