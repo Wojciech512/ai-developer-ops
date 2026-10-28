@@ -63,6 +63,54 @@ Konsekwencja dla planu: zadanie 3.1 (uzbrojenie bramki przez rejestrację w
 `hooks/hooks.json`) **wstrzymane** do rozstrzygnięcia 1.1, zgodnie z warunkiem z
 zadania 1.2. Pozostałe grupy (2, 4, 5, 6, 7, 8) są niezależne i wykonane.
 
+### Druga próba probe'a i ustalenie, dlaczego nie da się go dokończyć
+
+Użytkownik wybrał dokończenie probe'a. Druga próba: hook w
+`.claude/settings.local.json` (plik nieśledzony, więc poza zmianą), żeby nie ruszać
+pliku śledzonego. Użytkownik wykonał `! echo HOOK_PROBE_HUMAN`.
+
+Wynik: log nie powstał — ani po komendzie człowieka, ani po komendzie agenta
+(`echo HOOK_PROBE_AGENT_5`). Kontrola dodatnia nie przeszła po raz trzeci.
+
+Test lokalizujący przyczynę — czy jakikolwiek hook Claude jest w tej sesji żywy:
+próba `Write` do ścieżki chronionej.
+```
+Write -> migrations/hook-liveness-probe.sql
+PreToolUse:Write hook error: [bash "/Users/wojciechwylezol/.ai-developer-ops/scripts/protect-paths.sh"]:
+Blocked: .../migrations/hook-liveness-probe.sql is protected. Ask the user.
+If approved, rerun with AIDEVOPS_ALLOW_PROTECTED=1.
+```
+**Hooki pluginu są żywe i blokują.** Zwróć uwagę na ścieżkę w komunikacie:
+`/Users/wojciechwylezol/.ai-developer-ops/scripts/protect-paths.sh`, czyli **główny
+checkout** przez symlink — nie ten worktree.
+
+Z tego wynika rozdzielenie, które jest właściwym wynikiem tego zadania:
+
+| warstwa | stan w tej sesji |
+|---|---|
+| hooki pluginu, ładowane na starcie sesji z głównego checkoutu | **żywe**, blokują (dowód powyżej) |
+| hooki z `.claude/settings.json` / `settings.local.json` dodane w trakcie sesji | **nie uzbrajają się** — trzy próby, kontrola dodatnia za każdym razem negatywna |
+
+Czyli: jedyną drogą do żywego hooka na `Bash` jest plugin, a plugin to główny
+checkout, którego z izolowanej sesji worktree nie wolno dotykać. Probe'a **nie da się
+dokończyć w tej sesji** z przyczyny strukturalnej, nie z powodu błędu konfiguracji.
+
+Poszlaka, nie dowód: komendy człowieka z prefiksem `!` pojawiają się w transkrypcie
+jako para `bash-input`/`bash-stdout`, a nie jako wywołanie narzędzia Bash. Skoro
+`PreToolUse` odpala się na wywołaniach narzędzi, sugeruje to, że `!` go omija — czyli
+scenariusz korzystny. Nie zapisuję tego jako ustalenia, bo to wnioskowanie z formy
+transkryptu, a nie pomiar.
+
+**Wniosek praktyczny:** po rejestracji hooka w `hooks/hooks.json` i przeładowaniu
+pluginów test staje się trywialny i wykonalny dla człowieka — wpisać `! git push` i
+zobaczyć, czy pojawia się komunikat bramki, czy błąd samego `git`. Jedna komenda,
+natychmiastowa diagnoza. Wycofanie: usunąć wpis `deny-push.sh` z `hooks/hooks.json`
+w edytorze; `protect-paths` tego nie blokuje, bo przechwytuje tylko zapisy **agenta**.
+
+Artefakty probe'a usunięte: `.claude/settings.local.json` i `/tmp/hook-probe.log`.
+`git status --porcelain` pusty. Katalog `migrations/` nie powstał — `Write` został
+zablokowany przed utworzeniem pliku.
+
 ## zadanie 7 — ops-ship przygotowuje, nie wykonuje
 
 `skills/ops-ship/SKILL.md` przepisany: frontmatter nie obiecuje pushu/otwarcia PR jako
