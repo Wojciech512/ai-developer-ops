@@ -162,12 +162,20 @@ warunku PASS. Zasadne: wewnętrzna sprzeczność artefaktów. Fix: scratch usuni
 sekcja zakresu niżej odtworzona.
 
 WARN 2 (README.md:35) — `use docs-researcher: ...` nie jest udokumentowaną składnią
-wywołania subagenta. Zweryfikowane niezależnie przez agenta claude-code-guide wobec
-code.claude.com/docs/en/sub-agents.md: udokumentowaną formą gwarantującą dispatch
-jest `@<nazwa>`, cytat "This ensures that specific subagent runs rather than leaving
-the choice to Claude". Forma `use X: ...` to zwykły język naturalny bez parsera.
-Zasadne i istotne, bo kolumna nazywa się "Wypisujesz".
-Fix: wiersz 6 to `@docs-researcher <pytanie>`.
+wywołania subagenta. Zasadne i istotne, bo kolumna nazywa się "Wypisujesz".
+Ustalenie właściwej formy zajęło dwa podejścia, oba zapisane, bo pierwsze było błędne:
+  1. Agent `claude-code-guide` odpowiedział, że poprawna forma to `@<nazwa>`, czyli
+     `@docs-researcher`. Wprowadziłem to w commicie 6248c6e.
+  2. Powtórzone review B (Codex) zgłosiło to jako BLOCKER: w Claude Code 2.1.251
+     `@docs-researcher` parsuje się jako wzmianka o *pliku*, a ręczna forma to
+     `@agent-<nazwa>`.
+  3. Rozstrzygnięte wobec źródła, nie przez wybór strony — `code.claude.com/docs/en/
+     sub-agents.md` podaje formę ręczną `@agent-<name>` i wprost mówi, że przy formie
+     bez prefiksu "the typeahead shows file matches rather than agents". Bare `@name`
+     nie jest pokazane jako poprawne dla subagentów.
+Codex miał rację, `claude-code-guide` się mylił. Fix: `@agent-docs-researcher <pytanie>`.
+Lekcja: raport subagenta to niezweryfikowane twierdzenie, także gdy brzmi
+autorytatywnie i cytuje URL. Dopiero pobranie dokumentacji zamknęło sprawę.
 
 WARN 3 (README.md:39) — akapit o Codeksie mówił, czego nie ma, bez zamiennika dla
 wiersza "Bug". Zasadne; to niedomknięta część WARN 4 z `critique.md`.

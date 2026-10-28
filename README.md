@@ -32,7 +32,7 @@ spec (OpenSpec) -> plan i tasks -> wykonanie w harnessie, jedno zadanie na świe
 | Review czegokolwiek (PR, MR, gałąź, ścieżka) | `/ai-developer-ops:ops-review <target>` | `/code-review`, security, drugi model |
 | Poprawka na jedno zdanie | zwykła prośba | hooki i `make check` pilnują; TDD z `AGENTS.md` odpala się samo |
 | PR/MR | `/ai-developer-ops:ops-ship <id>` | warunki wstępne, szablon, dowody, boty |
-| Pytanie o API biblioteki | `@docs-researcher <pytanie>` | Context7 w subagencie |
+| Pytanie o API biblioteki | `@agent-docs-researcher <pytanie>` | Context7 w subagencie |
 
 **Czego nie mieszać.** Jeden plan i tylko jeden: `openspec/changes/<id>/tasks.md` — `superpowers:brainstorming` i `superpowers:writing-plans` odpalaj wyłącznie ręcznie, żeby nie powstał drugi plan, a zmianę prowadzoną przez OpenSpec zamykaj przez `ops-ship`, nie przez `superpowers:finishing-a-development-branch`. Bug zostaje bugiem nawet gdy fix ma jedną linię: test odtwarzający jest obowiązkowy.
 
