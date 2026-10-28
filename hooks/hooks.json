@@ -2,7 +2,9 @@
   "hooks": {
     "PreToolUse": [
       { "matcher": "Edit|Write|MultiEdit",
-        "hooks": [ { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/protect-paths.sh\"" } ] }
+        "hooks": [ { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/protect-paths.sh\"" } ] },
+      { "matcher": "Bash",
+        "hooks": [ { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/deny-push.sh\"" } ] }
     ],
     "PostToolUse": [
       { "matcher": "Edit|Write|MultiEdit",

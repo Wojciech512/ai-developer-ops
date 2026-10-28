@@ -111,6 +111,82 @@ Artefakty probe'a usunięte: `.claude/settings.local.json` i `/tmp/hook-probe.lo
 `git status --porcelain` pusty. Katalog `migrations/` nie powstał — `Write` został
 zablokowany przed utworzeniem pliku.
 
+## zadanie 3.1 — rejestracja hooka
+
+Decyzja użytkownika po przedstawieniu nierozstrzygalności probe'a: zarejestrować.
+
+```
+$ jq empty hooks/hooks.json && echo "jq empty: OK"
+jq empty: OK
+
+$ jq '[.hooks.PreToolUse[]] | length' hooks/hooks.json
+2
+
+$ jq -r '.hooks.PreToolUse[] | "  matcher=\(.matcher)  ->  \(.hooks[0].command)"' hooks/hooks.json
+  matcher=Edit|Write|MultiEdit  ->  bash "${CLAUDE_PLUGIN_ROOT}/scripts/protect-paths.sh"
+  matcher=Bash  ->  bash "${CLAUDE_PLUGIN_ROOT}/scripts/deny-push.sh"
+```
+**PASS.**
+
+### Dodatkowo: testy samego uzbrojenia (poza pierwotnym planem)
+
+`make check` sprawdzał `hooks.json` tylko przez `jq empty`, co przechodzi równie
+chętnie z usuniętym wpisem `deny-push`. Bramkę dałoby się więc cicho rozbroić jedną
+edycją, a nic by tego nie zauważyło — co kłóci się z wymaganiem „Bramka chroni własną
+konfigurację" ze speca. Dodana klasa `HookRegistration` w `tests/test_hooks.py`:
+wpis `Bash` istnieje dokładnie raz i woła `deny-push.sh`, wpis `protect-paths`
+nie zniknął, a każdy skrypt wymieniony w `hooks.json` faktycznie istnieje na dysku.
+
+Test bramki na tych testach — czy w ogóle mogą paść:
+```
+$ python3 -c "... usuń wpis matcher=Bash z hooks/hooks.json ..."
+removed Bash entry; PreToolUse now 1
+
+$ python3 -m unittest tests.test_hooks -k HookRegistration
+AssertionError: 0 != 1 : expected exactly one Bash PreToolUse entry
+FAILED (failures=1)
+
+$ cp /tmp/hooks.json.bak hooks/hooks.json
+$ jq -r '.hooks.PreToolUse[] | .matcher' hooks/hooks.json
+Edit|Write|MultiEdit
+Bash
+
+$ make check
+Ran 66 tests in 1.616s
+OK
+```
+Asercje faktycznie padają bez uzbrojenia, więc nie są dekoracją.
+
+## zadanie 3.2 — przekazane człowiekowi, NIE wykonane
+
+Czego **nie** udało się dowieść w tej sesji: że zarejestrowany hook zatrzymuje
+wywołanie narzędzia `Bash`. Przyczyna strukturalna, udokumentowana wyżej —
+`$CLAUDE_PLUGIN_ROOT` wskazuje główny checkout, więc `hooks.json` z tego worktree nie
+jest w tej sesji ładowany. Dowiedzione jest natomiast zachowanie samego skryptu:
+32 testy jednostkowe plus niezależna weryfikacja kontrolera na 22 rozstrzygających
+przypadkach, 0 niezgodności.
+
+**Procedura dla człowieka po merge'u do głównego checkoutu:**
+
+1. Przeładuj plugin: `/reload-plugins` w otwartej sesji, albo nowa sesja.
+2. Test negatywny (oczekiwana blokada). W sesji agenta poproś o `git push` i sprawdź,
+   czy pojawia się komunikat `deny-push.sh`:
+   `Blocked: this command would move code to a remote ...`
+3. Test pozytywny (oczekiwane przejście): `git status` i `make check` działają normalnie.
+4. **Pytanie otwarte z zadania 1.1** — wpisz `! git push`. Dwa wyniki:
+   - błąd samego `git` (np. o braku upstreamu) → hooki **nie** widzą komend `!`,
+     bramka trafia tylko w agenta, wszystko zgodnie z zamysłem;
+   - komunikat `deny-push.sh` → bramka blokuje też człowieka. Wtedy spec wymaga
+     osłabienia (wymaganie o blokadzie bezpośrednich wywołań trzeba zawęzić do
+     wywołań agenta), bo bramka trafia w niewłaściwą osobę.
+5. **Wycofanie**, jeśli krok 4 wyjdzie niekorzystnie: usuń z `hooks/hooks.json` wpis
+   `{"matcher": "Bash", ...}` wołający `deny-push.sh`. `protect-paths` tego nie
+   zablokuje, bo przechwytuje wyłącznie zapisy **agenta**, nie edycje człowieka.
+   Warstwa `deny` w `settings.json` i reguła w `AGENTS.md` zostają i nadal działają.
+
+Dopóki krok 4 nie zostanie wykonany, pytanie z 1.1 pozostaje otwarte — zapisane tutaj,
+nie zamknięte milczeniem.
+
 ## zadanie 7 — ops-ship przygotowuje, nie wykonuje
 
 `skills/ops-ship/SKILL.md` przepisany: frontmatter nie obiecuje pushu/otwarcia PR jako

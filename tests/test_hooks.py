@@ -329,5 +329,46 @@ class StopGate(unittest.TestCase):
         self.assertIn("make check FAILED", r.stderr)
 
 
+class HookRegistration(unittest.TestCase):
+    """The gate is only a gate while it stays wired up.
+
+    `make check` runs `jq empty` on hooks.json, which passes just as happily
+    with the deny-push entry deleted. These assert the wiring itself.
+    """
+
+    def setUp(self):
+        self.hooks = json.loads((SCRIPTS.parent / "hooks" / "hooks.json").read_text())
+
+    def pre_tool_use(self):
+        return self.hooks["hooks"]["PreToolUse"]
+
+    def test_deny_push_registered_for_bash(self):
+        entries = [e for e in self.pre_tool_use() if e.get("matcher") == "Bash"]
+        self.assertEqual(len(entries), 1, "expected exactly one Bash PreToolUse entry")
+        commands = [h["command"] for h in entries[0]["hooks"]]
+        self.assertTrue(
+            any("deny-push.sh" in c for c in commands),
+            "Bash PreToolUse entry must invoke deny-push.sh; found %r" % (commands,),
+        )
+
+    def test_protect_paths_still_registered(self):
+        commands = [
+            h["command"]
+            for e in self.pre_tool_use()
+            for h in e["hooks"]
+            if "Edit" in (e.get("matcher") or "")
+        ]
+        self.assertTrue(any("protect-paths.sh" in c for c in commands))
+
+    def test_registered_hook_scripts_exist_and_are_readable(self):
+        for entry in self.pre_tool_use():
+            for hook in entry["hooks"]:
+                name = hook["command"].rsplit("/", 1)[-1].rstrip('"')
+                self.assertTrue(
+                    (SCRIPTS / name).is_file(),
+                    "hooks.json references scripts/%s which does not exist" % name,
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
