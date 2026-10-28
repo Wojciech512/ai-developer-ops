@@ -255,5 +255,89 @@ class ValidatePaths(ValidateCase):
         self.assertRejected(model, "PaymentGroup", "Group")
 
 
+class ValidateChars(ValidateCase):
+    """design.md -> 'Reguly znakow: odrzucamy, nie escapujemy'."""
+
+    def test_validate_chars_rejects_a_quote_in_op(self):
+        model = model_fixture()
+        model["interactions"][0]["op"] = 'install"sh'
+        self.assertRejected(model, "op", '"')
+
+    def test_validate_chars_rejects_a_backtick_in_label(self):
+        model = model_fixture()
+        model["components"][1]["label"] = "install`sh"
+        self.assertRejected(model, "label", "`")
+
+    def test_validate_chars_rejects_a_newline_in_verb(self):
+        model = model_fixture()
+        model["interactions"][0]["verb"] = "uruchamia\nponownie"
+        self.assertRejected(model, "verb")
+
+    def test_validate_chars_rejects_a_pipe_in_title(self):
+        self.assertRejected(model_fixture(title="a|b"), "title", "|")
+
+    def test_validate_chars_rejects_an_angle_bracket_in_label(self):
+        model = model_fixture()
+        model["components"][1]["label"] = "<script>"
+        self.assertRejected(model, "label")
+
+    def test_validate_chars_rejects_a_backslash_in_op(self):
+        model = model_fixture()
+        model["interactions"][0]["op"] = "a\\b"
+        self.assertRejected(model, "op")
+
+    def test_validate_chars_rejects_an_empty_verb(self):
+        model = model_fixture()
+        model["interactions"][0]["verb"] = ""
+        self.assertRejected(model, "verb")
+
+    def test_validate_chars_rejects_a_whitespace_only_verb(self):
+        model = model_fixture()
+        model["interactions"][0]["verb"] = "   "
+        self.assertRejected(model, "verb")
+
+    def test_validate_chars_rejects_a_whitespace_only_op(self):
+        model = model_fixture()
+        model["interactions"][0]["op"] = "  "
+        self.assertRejected(model, "op")
+
+    def test_validate_chars_rejects_a_backtick_in_path(self):
+        model = model_fixture()
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        model["components"][1]["path"] = "scripts/in`stall.sh"
+        (root / "scripts").mkdir(parents=True, exist_ok=True)
+        (root / "scripts/in`stall.sh").touch()
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("path", r.stderr)
+
+    def test_validate_chars_accepts_a_path_with_a_space(self):
+        model = model_fixture()
+        model["components"][1]["path"] = "scripts/in stall.sh"
+        self.assertAccepted(model)
+
+    def test_validate_chars_accepts_polish_diacritics(self):
+        model = model_fixture()
+        model["interactions"][0]["verb"] = "zapisuje"
+        model["components"][1]["label"] = "instalacja zależności"
+        self.assertAccepted(model)
+
+    def test_validate_chars_accepts_the_allowed_punctuation(self):
+        model = model_fixture()
+        model["components"][1]["label"] = "install.sh (v2): a-b_c, d/e"
+        self.assertAccepted(model)
+
+    def test_validate_chars_reports_every_violation_at_once(self):
+        model = model_fixture(title="a|b")
+        model["components"][1]["label"] = "x`y"
+        model["interactions"][0]["op"] = 'z"w'
+        r = self.assertRejected(model)
+        for needle in ("title", "label", "op"):
+            self.assertIn(needle, r.stderr)
+        self.assertGreaterEqual(len(r.stderr.strip().splitlines()), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

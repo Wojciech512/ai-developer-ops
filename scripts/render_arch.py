@@ -35,6 +35,37 @@ FLOW_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 # Reserved for generated aggregates so a model id can never collide with one.
 AGGREGATE_SUFFIX = "Group"
 
+# Rendered text reaches both PlantUML and Markdown, whose special characters
+# differ. Rather than escape correctly for two grammars, allow one safe set
+# and reject the rest: these values are short and authored, so "fix the model"
+# is an unambiguous instruction. \w covers letters (diacritics included),
+# digits and underscore.
+TEXT_CHAR_RE = re.compile(r"[\w \-./():,]")
+# Filesystems permit far more than the text fields do; only the two
+# characters that would break a Markdown code span or a line survive as rules.
+PATH_FORBIDDEN = ("`", "\n", "\r")
+
+
+def _bad_text_chars(value):
+    return sorted({c for c in value if not TEXT_CHAR_RE.fullmatch(c)})
+
+
+def _validate_text(value, field, where, errors):
+    """Reject empty, whitespace-only, and format-breaking text."""
+    if not isinstance(value, str):
+        errors.append(f"{where}: {field} {value!r} must be a string")
+        return
+    if not value.strip():
+        errors.append(f"{where}: {field} must not be empty")
+        return
+    bad = _bad_text_chars(value)
+    if bad:
+        shown = " ".join(repr(c) for c in bad)
+        errors.append(
+            f"{where}: {field} {value!r} contains disallowed "
+            f"character(s): {shown}"
+        )
+
 
 class ModelError(Exception):
     """Raised when the model cannot be read at all."""
@@ -92,6 +123,7 @@ def _validate_components(model, errors, root):
                 f"{where}: layer {component['layer']!r} is not one of "
                 f"{', '.join(LAYERS)}"
             )
+        _validate_text(component["label"], "label", where, errors)
         _validate_component_path(component, where, root, errors)
     return components
 
@@ -116,6 +148,13 @@ def _validate_component_path(component, where, root, errors):
     if not isinstance(path, str) or not path:
         errors.append(f"{where}: path {path!r} must be a non-empty string")
         return
+    for char in PATH_FORBIDDEN:
+        if char in path:
+            errors.append(
+                f"{where}: path {path!r} contains disallowed "
+                f"character {char!r}"
+            )
+            return
     if root is not None and not (root / path).exists():
         errors.append(
             f"{where}: path {path!r} does not exist under {root}"
@@ -150,6 +189,7 @@ def _validate_flows(model, errors):
                 f"{where}: kind {flow['kind']!r} is not one of "
                 f"{', '.join(FLOW_KINDS)}"
             )
+        _validate_text(flow["label"], "label", where, errors)
         if flow.get("kind") == "main":
             mains.append(fid)
     if len(mains) != 1:
@@ -182,6 +222,8 @@ def _validate_interactions(model, errors, component_ids, flow_ids):
                     f"{where}: {end} {interaction[end]!r} has no "
                     f"matching component"
                 )
+        _validate_text(interaction["verb"], "verb", where, errors)
+        _validate_text(interaction["op"], "op", where, errors)
         seq = interaction["seq"]
         # bool is a subclass of int; a true/false seq is a typo, not an order.
         if type(seq) is not int:
@@ -195,6 +237,8 @@ def validate_model(model, root=None):
     if not isinstance(model, dict):
         return ["model: must be a JSON object"]
     _check_fields(model, TOP_FIELDS, "model", errors)
+    if "title" in model:
+        _validate_text(model["title"], "title", "model", errors)
     components = _validate_components(model, errors, root)
     flows = _validate_flows(model, errors)
     component_ids = {
