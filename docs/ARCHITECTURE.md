@@ -21,4 +21,4 @@
 
 - Data: 2026-10-28
 - Zakres: caly repozytorium, dogfooding zmiany ops-discover
-- Commit: `563786c`
+- Commit: `6cb3852`

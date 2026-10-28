@@ -62,14 +62,54 @@ Ran 204 tests ... OK
 
 `git status --short` nie wymienia `tests/test_render_arch.py`, czyli plik wrócił do stanu zacommitowanego.
 
+## Etap 1 — spec (`/opsx:verify`)
+
+36/36 zadań, wszystkie artefakty czytelne, `openspec validate --strict` exit 0. 24 wymagania ADDED, 56 scenariuszy, zero REMOVED/RENAMED. Dwie luki znalezione na tym etapie i naprawione w fix pass: brak testu dowodzącego, że renderer nie czyta treści plików (wymaganie „Model architektury jest jedynym wejściem renderera"), oraz brak egzekwowania niepustego przebiegu `main` (scenariusz „Zakres opróżniłby przebieg główny").
+
 ## review A (poprawność)
 
-<uzupełnić: ops-review>
+`/code-review 7afdda8..HEAD high`. **5 findings, 0 BLOCKER po adjudykacji, wszystkie naprawione.**
+
+1. `render_arch.py:160` — `root / path` gubi lewy operand, gdy prawy jest bezwzględny, więc `path: "/etc/hosts"` przechodził kontrolę zawierania. Naprawione: odrzucenie ścieżek bezwzględnych + porównanie `resolve()` wobec `root.resolve()`.
+2. i 3. `render_arch.py:34,181` — `$` z `.match()` dopuszcza końcowy `\n`; `id: "Api\n"` przechodził i rozrywał deklarację. Naprawione: `fullmatch`.
+4. `render_arch.py:859` — `puml`/`all` zgłaszały błędy modelu i dopisków w dwóch turach, wbrew decyzji 6. Naprawione: jedna lista.
+5. `render_arch.py:711` — podwójne liczenie `aggregate()` w `all`. **Odłożone jako minor**: ≤12 komponentów, koszt pomijalny, a przekazywanie policzonej pary do obu funkcji dokłada sprzężenie.
+
+Recenzent sam wycofał jeden finding (wielkość liter w `MANUAL_FORBIDDEN`) po reprodukcji — linia i tak jest odrzucana przez regułę ogólną.
 
 ## review B (drugi model)
 
-<uzupełnić: ops-review>
+`codex exec -m gpt-6-astra -c model_reasoning_effort=high` (wariant claude-codex). **10 BLOCKER + 4 WARN zgłoszone; 9 BLOCKER potwierdzonych i naprawionych, 1 odrzucony, 4 WARN naprawione.**
+
+Potwierdzone reprodukcją przed naprawą:
+- `%breakline()` w dopisku przemycał drugą instrukcję przez kontrolę jednoliniową → nowy `MANUAL_INJECTION_RE` + zakaz dyrektyw `!`.
+- `render_arch.py` ma tryb 644, a `SKILL.md` wołał go bezpośrednio → jawny `python3`, zgodnie z konwencją `bash "$ROOT/scripts/init.sh"` z `init`.
+- Przepływ awansowany z `independent` na `main` gubił swoje dopiski → gałąź `main` opróżnia też własny kubełek.
+- `$(SHA256) f | cut` bierze status z `cut`, więc awaria skrótu zapisywała pusty digest i meldowała sukces → nowy cel `docs-stamp` ze sprawdzeniem statusu i niepustości.
+- `docs-fresh` przechodził przy usuniętym SVG → wymagane istnienie pliku.
+- `all` publikowało `.puml` przed zapisem tymczasowego `.md` → oba pliki stageowane, potem dwa `rename`.
+- `archive/<id>/scope.txt` — `/opsx:archive` dodaje prefiks daty → poprawione na `<YYYY-MM-DD>-<id>`.
+- `--name-only` gubi źródło zmiany nazwy → dodane `--no-renames`.
+- `id` z końcowym `\n` (duplikat review A).
+- WARN-y: crash walidacji na `id: []`, test lokalizacji zapisu ignorujący kod wyjścia, test sierot niewykrywający niejawnych uczestników, podciągowe sprawdzenie `.PHONY`.
+
+**Odrzucony BLOCKER** — „wyjście zależy od zegara i commita". Spec ogranicza determinizm do `docs/architecture.puml` („Renderer SHALL produkować bajtowo identyczny `docs/architecture.puml`"), a osobny scenariusz „Data i commit poza diagramem" wprost wymaga, by data i commit żyły w Markdownie. Zachowanie jest zgodne ze specem i z decyzją 2; recenzent przyjął szerszy zakres, niż spec deklaruje.
+
+Uwaga środowiskowa: recenzent zgłosił, że `make check` przerwał się na `typecheck`, bo jego Python nie ma `tomllib`. To artefakt jego sandboxu — lokalnie `make check` jest zielone (226 testów).
+
+## Etap docs-researcher (PlantUML)
+
+Zweryfikowane wobec dokumentacji i empirycznie:
+- `-tsvg` zapisuje obok źródła — potwierdzone.
+- `-checkonly` jest przestarzałe, `-failfast2` redundantne z nim; udokumentowany jest `--check-syntax` z kontraktem kodu wyjścia. Testy przełączone.
+- Wywołanie Dockera **zweryfikowane empirycznie** (dokumentacja niedostępna): `docker run --rm -v "$PWD/docs:/data" plantuml/plantuml -tsvg /data/architecture.puml` → exit 0, zapisuje `docs/architecture.svg`.
+- **Wiadomość wewnątrz `box ... end box` jest tolerowana, ale nieudokumentowana.** Stąd nowa reguła: w sekcji boxa dopisek może być wyłącznie komentarzem.
+- Zmierzone zachowanie `plantuml`: śmieci → 200, brak diagramu → 100, zbłąkany `end` → 200, ale niedomknięty `box`/`group` → 0. Dodany test-strażnik dowodzący, że kontrola parsowania w ogóle potrafi zawieść.
 
 ## security
 
-<uzupełnić: ops-review>
+PASS, zero findings. Powierzchnia: jedno wywołanie `subprocess.run(["git","rev-parse","--short","HEAD"])` — stała lista argv, bez `shell=True`, bez interpolacji. Parsowanie wyłącznie `json` ze stdlib; brak `eval`, `exec`, `pickle`, `yaml`. Zapisy ograniczone do ścieżek podanych flagami CLI (wartości zaufane). Po naprawie findingu z review A ścieżki z modelu nie mogą już wyjść poza `--root`.
+
+## Werdykt
+
+Po fix pass: `make check` exit 0 (226 testów), `make e2e` `E2E_SMOKE_OK`, `make docs-fresh` exit 0, `openspec validate --strict` exit 0. Zero otwartych BLOCKER. Jeden minor odłożony świadomie (podwójne `aggregate()` w `all`).

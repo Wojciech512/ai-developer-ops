@@ -11,7 +11,7 @@ import json
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # Fixed order. Participant order and box order both derive from this, so the
 # layout cannot depend on the order entries happen to appear in the model.
@@ -31,8 +31,10 @@ COMPONENT_FIELDS = {"id", "label", "layer", "path"}
 FLOW_FIELDS = {"id", "label", "kind"}
 INTERACTION_FIELDS = {"flow", "from", "to", "verb", "op", "seq"}
 
-COMPONENT_ID_RE = re.compile(r"^[A-Z][A-Za-z0-9]*$")
-FLOW_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+# fullmatch, not match: Python's `$` also matches before a trailing
+# newline, so "Api\n" would otherwise pass and split the declaration.
+COMPONENT_ID_RE = re.compile(r"[A-Z][A-Za-z0-9]*")
+FLOW_ID_RE = re.compile(r"[a-z][a-z0-9-]*")
 
 # Reserved for generated aggregates so a model id can never collide with one.
 AGGREGATE_SUFFIX = "Group"
@@ -107,7 +109,7 @@ def _validate_components(model, errors, root):
         if not _check_fields(component, COMPONENT_FIELDS, where, errors):
             continue
         cid = component["id"]
-        if not isinstance(cid, str) or not COMPONENT_ID_RE.match(cid):
+        if not isinstance(cid, str) or not COMPONENT_ID_RE.fullmatch(cid):
             errors.append(
                 f"{where}: id {cid!r} must match {COMPONENT_ID_RE.pattern}"
             )
@@ -157,10 +159,28 @@ def _validate_component_path(component, where, root, errors):
                 f"character {char!r}"
             )
             return
-    if root is not None and not (root / path).exists():
+    if PurePosixPath(path).is_absolute() or Path(path).is_absolute():
         errors.append(
-            f"{where}: path {path!r} does not exist under {root}"
+            f"{where}: path {path!r} must be relative to the repository root"
         )
+        return
+    if root is None:
+        return
+    target = root / path
+    # root / "/etc/hosts" is "/etc/hosts": joining discards the left operand
+    # when the right one is absolute, so existence alone proves nothing about
+    # containment. Resolve and compare explicitly.
+    try:
+        resolved = target.resolve()
+        base = root.resolve()
+    except OSError:
+        errors.append(f"{where}: path {path!r} cannot be resolved")
+        return
+    if resolved != base and base not in resolved.parents:
+        errors.append(f"{where}: path {path!r} resolves outside {root}")
+        return
+    if not target.exists():
+        errors.append(f"{where}: path {path!r} does not exist under {root}")
 
 
 def _validate_flows(model, errors):
@@ -178,7 +198,7 @@ def _validate_flows(model, errors):
         if not _check_fields(flow, FLOW_FIELDS, where, errors):
             continue
         fid = flow["id"]
-        if not isinstance(fid, str) or not FLOW_ID_RE.match(fid):
+        if not isinstance(fid, str) or not FLOW_ID_RE.fullmatch(fid):
             errors.append(
                 f"{where}: id {fid!r} must match {FLOW_ID_RE.pattern}"
             )
@@ -199,6 +219,15 @@ def _validate_flows(model, errors):
             f"flows: exactly one flow must have kind 'main', found "
             f"{len(mains)} ({', '.join(mains) or 'none'})"
         )
+    elif isinstance(model.get("interactions"), list) and not [
+        i for i in model["interactions"]
+        if isinstance(i, dict) and i.get("flow") == mains[0]
+    ]:
+        # An emptied main flow is what a too-narrow --scope produces.
+        errors.append(
+            f"flows: the main flow {mains[0]!r} has no interactions; "
+            f"the refresh scope is too narrow"
+        )
     return flows
 
 
@@ -214,12 +243,20 @@ def _validate_interactions(model, errors, component_ids, flow_ids):
             continue
         if not _check_fields(interaction, INTERACTION_FIELDS, where, errors):
             continue
-        if interaction["flow"] not in flow_ids:
+        if not isinstance(interaction["flow"], str):
+            errors.append(
+                f"{where}: flow {interaction['flow']!r} must be a string"
+            )
+        elif interaction["flow"] not in flow_ids:
             errors.append(
                 f"{where}: flow {interaction['flow']!r} has no matching flow"
             )
         for end in ("from", "to"):
-            if interaction[end] not in component_ids:
+            if not isinstance(interaction[end], str):
+                errors.append(
+                    f"{where}: {end} {interaction[end]!r} must be a string"
+                )
+            elif interaction[end] not in component_ids:
                 errors.append(
                     f"{where}: {end} {interaction[end]!r} has no "
                     f"matching component"
@@ -243,10 +280,16 @@ def validate_model(model, root=None):
         _validate_text(model["title"], "title", "model", errors)
     components = _validate_components(model, errors, root)
     flows = _validate_flows(model, errors)
+    # Only hashable string ids: a malformed value is already an error, and
+    # putting it in a set would raise instead of completing the error list.
     component_ids = {
-        c["id"] for c in components if isinstance(c, dict) and "id" in c
+        c["id"] for c in components
+        if isinstance(c, dict) and isinstance(c.get("id"), str)
     }
-    flow_ids = {f["id"] for f in flows if isinstance(f, dict) and "id" in f}
+    flow_ids = {
+        f["id"] for f in flows
+        if isinstance(f, dict) and isinstance(f.get("id"), str)
+    }
     _validate_interactions(model, errors, component_ids, flow_ids)
     return errors
 
@@ -442,6 +485,10 @@ def render_puml(model, manual=()):
         messages = _rendered_messages(model, flow["id"], mapping)
         if flow["kind"] == "main":
             lines.extend(messages)
+            # Both buckets: a flow promoted from independent to main keeps
+            # manual lines filed under its own id, and dropping them here
+            # would delete text that must never be lost.
+            lines.extend(manual_for(("flow", flow["id"])))
             lines.extend(manual_for(("body", None)))
             lines.append("")
             continue
@@ -482,6 +529,10 @@ MANUAL_ALLOWED = (
     "or a full-line comment ('...)"
 )
 
+# PlantUML preprocessor functions such as %breakline() and %newline()
+# create real source lines, so a one-line check is not enough on its own:
+# a single manual line could carry a second statement past it.
+MANUAL_INJECTION_RE = re.compile(r"%\w+\s*\(")
 MANUAL_MESSAGE_RE = re.compile(r"^(\w+)\s*-{1,2}>\s*(\w+)\s*:\s*\S")
 MANUAL_NOTE_RE = re.compile(r"^note\s+(?:left|right)\s+of\s+(\w+)\s*:\s*\S")
 
@@ -566,7 +617,29 @@ def validate_manual(manual):
                 f"not be added by hand; allowed: {MANUAL_ALLOWED}"
             )
             continue
-        if content.startswith("'"):
+        if head.startswith("!"):
+            errors.append(
+                f"manual line {content!r} is a preprocessor directive, "
+                f"which may not be added by hand; allowed: {MANUAL_ALLOWED}"
+            )
+            continue
+        if MANUAL_INJECTION_RE.search(content):
+            errors.append(
+                f"manual line {content!r} uses a % directive; those create "
+                f"source lines, so one manual line could carry a second "
+                f"statement past this check"
+            )
+            continue
+        is_comment = content.startswith("'")
+        if entry.section[0] == "layer" and not is_comment:
+            # PlantUML tolerates a message inside box ... end box but does
+            # not document it; a box is specified as a participant grouping.
+            errors.append(
+                f"manual line {content!r} sits in a layer box, where only a "
+                f"comment is allowed; move it to a group or the main flow"
+            )
+            continue
+        if is_comment:
             continue
         if MANUAL_MESSAGE_RE.match(content) or MANUAL_NOTE_RE.match(content):
             continue
@@ -676,47 +749,48 @@ def _manual_or_empty(preserve):
     return parse_manual(path.read_text(encoding="utf-8"))
 
 
-def _load_manual(preserve):
-    """Read manual additions from an existing diagram, if there is one."""
-    if not preserve:
-        return []
-    path = Path(preserve)
-    if not path.exists():
-        return []
-    manual = parse_manual(path.read_text(encoding="utf-8"))
-    errors = validate_manual(manual)
-    if errors:
-        raise ModelError("\n".join(errors))
-    return manual
-
-
 def _validated(args):
-    """Load and validate, or raise ModelError carrying every violation."""
+    """Load and validate model and manual lines together.
+
+    One report, not two: fixing a model error only to be told about a
+    manual-line error on the next run is the same defect twice.
+    """
     model = load_model(args.model)
-    errors = validate_model(model, Path(args.root))
+    manual = _manual_or_empty(getattr(args, "preserve", None))
+    errors = validate_model(model, Path(args.root)) + validate_manual(manual)
     if errors:
         raise ModelError("\n".join(errors))
-    return model
+    return model, manual
+
+
+def _stage(path, text):
+    """Write a sibling temp file and return it, without publishing."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    return tmp, path
+
+
+def _publish(staged):
+    """Rename every staged file into place, back to back."""
+    for tmp, path in staged:
+        tmp.replace(path)
 
 
 def _write_atomic(path, text):
     """Write via a sibling temp file then replace, so no reader sees a
     half-written document."""
-    path = Path(path)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    tmp.replace(path)
+    _publish([_stage(path, text)])
 
 
 def cmd_puml(args):
-    model = _validated(args)
-    manual = _load_manual(args.preserve)
+    model, manual = _validated(args)
     _write_atomic(args.out, render_puml(model, manual))
     return 0
 
 
 def cmd_md(args):
-    model = _validated(args)
+    model, _ = _validated(args)
     date = args.date or _today()
     commit = args.commit or _head_commit()
     _write_atomic(args.out, render_md(model, args.scope, date, commit))
@@ -731,14 +805,16 @@ def cmd_all(args):
     What remains is the gap between two rename calls, not between two
     renders.
     """
-    model = _validated(args)
+    model, manual = _validated(args)
     date = args.date or _today()
     commit = args.commit or _head_commit()
-    manual = _load_manual(args.preserve)
     puml_text = render_puml(model, manual)
     md_text = render_md(model, args.scope, date, commit)
-    _write_atomic(args.puml_out, puml_text)
-    _write_atomic(args.md_out, md_text)
+    # Stage both before publishing either: an unwritable destination must
+    # not leave a new diagram beside the old document.
+    staged = [_stage(args.puml_out, puml_text),
+              _stage(args.md_out, md_text)]
+    _publish(staged)
     return 0
 
 
@@ -777,6 +853,7 @@ def build_parser():
     md.add_argument("--date")
     md.add_argument("--commit")
     md.add_argument("--root", default=".")
+    md.add_argument("--preserve")
     md.set_defaults(func=cmd_md)
 
     every = sub.add_parser("all", help="render both documents together")

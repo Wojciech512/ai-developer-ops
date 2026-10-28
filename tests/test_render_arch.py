@@ -396,6 +396,37 @@ class PumlCase(unittest.TestCase):
         return r.stderr
 
 
+class RendererIgnoresCode(PumlCase):
+    """The renderer needs the paths to exist; it never reads them."""
+
+    def test_identical_output_whatever_the_files_contain(self):
+        model = rich_model()
+        empty = self.render(model)
+
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        for component in model["components"]:
+            if component["path"]:
+                target = root / component["path"]
+                if target.is_file():
+                    target.write_text("x" * 4096 + "\nsecret\n")
+        out = tmp / "architecture.puml"
+        r = run_py(["puml", "--model", write_model(tmp, model),
+                    "--out", out, "--root", root])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(out.read_text(), empty)
+
+    def test_output_does_not_quote_file_contents(self):
+        model = rich_model()
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        (root / "scripts/worker.sh").write_text("MARKER_FROM_FILE_BODY\n")
+        out = tmp / "architecture.puml"
+        run_py(["puml", "--model", write_model(tmp, model),
+                "--out", out, "--root", root])
+        self.assertNotIn("MARKER_FROM_FILE_BODY", out.read_text())
+
+
 class PumlDeterminism(PumlCase):
 
     def test_determinism_survives_reordered_model_entries(self):
@@ -659,11 +690,24 @@ class PumlParses(PumlCase):
                     "--out", out, "--root", root])
         self.assertEqual(r.returncode, 0, r.stderr)
         check = subprocess.run(
-            ["plantuml", "-failfast2", "-checkonly", str(out)],
+            ["plantuml", "--check-syntax", str(out)],
             capture_output=True, text=True,
         )
         self.assertEqual(check.returncode, 0,
                          f"{check.stdout}\n{check.stderr}\n{out.read_text()}")
+
+    def test_parses_check_can_actually_fail(self):
+        """Guard: without this, every assertParses could be vacuous."""
+        tmp = temp_dir(self)
+        broken = tmp / "broken.puml"
+        broken.write_text("@startuml\nA -> B : x\nend\n@enduml\n")
+        check = subprocess.run(
+            ["plantuml", "--check-syntax", str(broken)],
+            capture_output=True, text=True,
+        )
+        self.assertNotEqual(check.returncode, 0,
+                            "plantuml accepted a stray end; assertParses "
+                            "would prove nothing")
 
     def test_parses_the_minimal_fixture(self):
         self.assertParses(model_fixture())
@@ -1149,7 +1193,8 @@ class ManualOrphan(PreserveCase):
     def test_orphan_catches_a_reference_to_a_collapsed_component(self):
         model = wide_model()
         tmp, root, puml = self.baseline(model)
-        self.insert_after(puml, "' layer:data",
+        # Body, not a layer box: a box may only hold comments.
+        self.insert_after(puml, "IntegrationGroup -> DataC : wola handle",
                           f"IntA -> DataA : wola stare {MANUAL}")
         text = self.represerve(model, tmp, root, puml)
         self.assertIn(ORPHAN, text)
@@ -1190,7 +1235,7 @@ class PreserveParses(PreserveCase):
         path = tmp / "preserved.puml"
         path.write_text(text)
         check = subprocess.run(
-            ["plantuml", "-failfast2", "-checkonly", str(path)],
+            ["plantuml", "--check-syntax", str(path)],
             capture_output=True, text=True,
         )
         self.assertEqual(check.returncode, 0,
@@ -1335,8 +1380,44 @@ class DocsFresh(unittest.TestCase):
         text = (REPO / "Makefile").read_text()
         phony = [ln for ln in text.splitlines()
                  if ln.startswith(".PHONY:")][0]
-        self.assertIn("docs", phony)
-        self.assertIn("docs-fresh", phony)
+        # Token compare: "docs" is a substring of "docs-fresh", so a
+        # substring check would pass with docs missing from the list.
+        targets = phony.split(":", 1)[1].split()
+        self.assertIn("docs", targets)
+        self.assertIn("docs-fresh", targets)
+
+    def test_docs_fresh_fails_when_the_svg_is_missing(self):
+        tmp = self.project(sha=self.digest(self.PUML))
+        (tmp / "docs/architecture.svg").unlink()
+        r = self.docs_fresh(tmp)
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("architecture.svg", r.stdout + r.stderr)
+
+    def test_docs_fresh_fails_when_the_stored_digest_is_empty(self):
+        tmp = self.project(sha="")
+        r = self.docs_fresh(tmp)
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+
+    def test_docs_fails_when_the_hash_command_is_unavailable(self):
+        """A masked hash failure would write an empty digest and pass."""
+        tmp = self.project(sha=None)
+        stub = tmp / "stub-bin"
+        stub.mkdir()
+        for tool in ("plantuml",):
+            exe = stub / tool
+            exe.write_text("#!/bin/sh\nexit 0\n")
+            exe.chmod(0o755)
+        for tool in ("shasum", "sha256sum"):
+            exe = stub / tool
+            exe.write_text("#!/bin/sh\nexit 7\n")
+            exe.chmod(0o755)
+        r = subprocess.run(
+            ["make", "docs"], cwd=tmp, capture_output=True, text=True,
+            env={"PATH": f"{stub}:/usr/bin:/bin", "HOME": str(tmp)},
+        )
+        self.assertNotEqual(r.returncode, 0, r.stdout + r.stderr)
+        digest = tmp / "docs/architecture.svg.sha256"
+        self.assertFalse(digest.exists() and digest.read_text().strip() == "")
 
     def test_docs_warns_and_succeeds_without_plantuml_or_docker(self):
         tmp = self.project(sha=None)
@@ -1426,7 +1507,7 @@ class SkillDocument(unittest.TestCase):
         text = self.skill()
         self.assertIn("CLAUDE_PLUGIN_ROOT", text)
         self.assertIn("~/.ai-developer-ops", text)
-        self.assertIn('"$ROOT/scripts/render_arch.py"', text)
+        self.assertIn('python3 "$ROOT/scripts/render_arch.py"', text)
 
     def test_skill_names_both_recon_subagents(self):
         text = self.skill()
@@ -1562,17 +1643,26 @@ class SyntheticRepo(unittest.TestCase):
     def test_synthetic_repo_writes_only_inside_docs(self):
         project, model_path = self.build()
         docs = project / "docs"
-        before = {p.relative_to(project).as_posix()
-                  for p in project.rglob("*") if p.is_file()}
-        run_py(["all", "--model", model_path,
-                "--puml-out", docs / "architecture.puml",
-                "--md-out", docs / "ARCHITECTURE.md",
-                "--root", project, "--scope", "x",
-                "--date", "2020-01-02", "--commit", "deadbee"])
-        after = {p.relative_to(project).as_posix()
+        snapshot = {p.relative_to(project).as_posix(): p.read_bytes()
+                    for p in project.rglob("*") if p.is_file()}
+        r = run_py(["all", "--model", model_path,
+                    "--puml-out", docs / "architecture.puml",
+                    "--md-out", docs / "ARCHITECTURE.md",
+                    "--root", project, "--scope", "x",
+                    "--date", "2020-01-02", "--commit", "deadbee"])
+        # Assert the run succeeded: otherwise nothing is created and the
+        # loop below would pass by iterating over an empty set.
+        self.assertEqual(r.returncode, 0, r.stderr)
+        after = {p.relative_to(project).as_posix(): p.read_bytes()
                  for p in project.rglob("*") if p.is_file()}
-        for created in after - before:
-            self.assertTrue(created.startswith("docs/"), created)
+        created = set(after) - set(snapshot)
+        self.assertTrue(created, "expected the render to create files")
+        for name in created:
+            self.assertTrue(name.startswith("docs/"), name)
+        for name, content in snapshot.items():
+            if not name.startswith("docs/"):
+                self.assertEqual(after[name], content,
+                                 f"{name} was modified outside docs/")
 
     def test_synthetic_repo_legend_cites_its_real_files(self):
         project, model_path = self.build()
@@ -1616,6 +1706,7 @@ class Integrations(unittest.TestCase):
         text = self.read("skills/ops-ship/SKILL.md")
         self.assertIn("scope.txt", text)
         self.assertIn("--diff-filter=ACMRD", text)
+        self.assertIn("--no-renames", text)
         self.assertLess(text.index("scope.txt"), text.index("git push"))
 
     def test_ops_ship_explains_why_scope_cannot_wait_for_merge(self):
@@ -1626,7 +1717,8 @@ class Integrations(unittest.TestCase):
     def test_ops_feature_refreshes_from_the_recorded_scope(self):
         text = self.read("skills/ops-feature/SKILL.md")
         self.assertIn("ops-discover --refresh --scope", text)
-        self.assertIn("archive/<id>/scope.txt", text)
+        self.assertIn("scope.txt", text)
+        self.assertIn("YYYY-MM-DD", text)
 
     def test_ops_feature_does_not_recompute_scope_after_merge(self):
         # The post-merge diff is always empty; computing it there was the
@@ -1652,6 +1744,185 @@ class Integrations(unittest.TestCase):
             with self.subTest(name=name):
                 lines = self.read(name).splitlines()
                 self.assertLessEqual(len(lines), 60, f"{name}: {len(lines)}")
+
+
+class ReviewFindings(PreserveCase):
+    """Regressions for defects found in review. Each failed before its fix."""
+
+    # --- id patterns accept a trailing newline (review A and B) ---
+
+    def test_finding_rejects_component_id_with_a_trailing_newline(self):
+        model = model_fixture()
+        model["components"][1]["id"] = "Installer\n"
+        model["interactions"][0]["to"] = "Installer\n"
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 1, r.stderr)
+
+    def test_finding_rejects_flow_id_with_a_trailing_newline(self):
+        model = model_fixture()
+        model["flows"][0]["id"] = "main\n"
+        model["interactions"][0]["flow"] = "main\n"
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 1, r.stderr)
+
+    # --- absolute path escapes the --root containment check (review A) ---
+
+    def test_finding_rejects_an_absolute_component_path(self):
+        model = model_fixture()
+        model["components"][1]["path"] = "/etc/hosts"
+        tmp = temp_dir(self)
+        root = tmp / "empty"
+        root.mkdir()
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("/etc/hosts", r.stderr)
+
+    def test_finding_rejects_a_path_escaping_the_root(self):
+        model = model_fixture()
+        model["components"][1]["path"] = "../outside.txt"
+        tmp = temp_dir(self)
+        (tmp / "outside.txt").write_text("x")
+        root = tmp / "root"
+        root.mkdir()
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 1, r.stderr)
+
+    # --- manual line can smuggle a second statement (review B) ---
+
+    def test_finding_rejects_a_breakline_directive_in_a_manual_line(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(
+            puml, "' flow:cron",
+            f"Worker -> Store : hello %breakline()Ghost -> Phantom : hi {MANUAL}")
+        stderr = self.represerve(model, tmp, root, puml, expect=1)
+        self.assertIn("%", stderr)
+
+    def test_finding_rejects_a_newline_directive_in_a_manual_line(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Worker -> Store : a %newline() b {MANUAL}")
+        self.represerve(model, tmp, root, puml, expect=1)
+
+    def test_finding_rejects_a_preprocessor_directive_in_a_manual_line(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron", f"!include other.puml {MANUAL}")
+        self.represerve(model, tmp, root, puml, expect=1)
+
+    def test_finding_no_undeclared_participant_reaches_the_diagram(self):
+        """Stronger than counting declarations: check the names PlantUML sees."""
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Ghost -> Phantom : wola nic {MANUAL}")
+        text = self.represerve(model, tmp, root, puml)
+        live = [ln for ln in text.splitlines()
+                if ln.strip() and not ln.strip().startswith("'")]
+        self.assertNotIn("Ghost", "\n".join(live))
+        self.assertNotIn("Phantom", "\n".join(live))
+
+    # --- a flow promoted to main drops its manual lines (review B) ---
+
+    def test_finding_manual_line_survives_a_flow_becoming_main(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        line = f"Worker -> Store : zachowaj mnie {MANUAL}"
+        self.insert_after(puml, "' flow:cron", line)
+        for flow in model["flows"]:
+            flow["kind"] = "main" if flow["id"] == "cron" else "independent"
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn("zachowaj mnie", text)
+
+    # --- box sections may only hold comments (docs-researcher) ---
+
+    def test_finding_rejects_a_message_inside_a_layer_box(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_before(puml, "end box",
+                           f"Api -> Store : zle miejsce {MANUAL}")
+        stderr = self.represerve(model, tmp, root, puml, expect=1)
+        self.assertIn("box", stderr)
+
+    def test_finding_still_accepts_a_comment_inside_a_layer_box(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        line = f"' uwaga o warstwie {MANUAL}"
+        self.insert_before(puml, "end box", line)
+        self.assertIn(line, self.represerve(model, tmp, root, puml))
+
+    # --- error reporting and robustness ---
+
+    def test_finding_puml_reports_model_and_manual_errors_together(self):
+        model = rich_model()
+        model["title"] = "a|b"
+        tmp, root, puml = self.baseline(rich_model())
+        self.insert_after(puml, "' flow:cron", f"participant Ghost {MANUAL}")
+        stderr = self.represerve(model, tmp, root, puml, expect=1)
+        self.assertIn("title", stderr)
+        self.assertIn("participant", stderr)
+
+    def test_finding_validation_survives_a_list_valued_id(self):
+        model = model_fixture()
+        model["components"][1]["id"] = []
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_finding_validation_survives_a_list_valued_endpoint(self):
+        model = model_fixture()
+        model["interactions"][0]["to"] = []
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_finding_rejects_a_main_flow_with_no_interactions(self):
+        """'scope too narrow': a refresh must not empty the main flow."""
+        model = rich_model()
+        model["interactions"] = [i for i in model["interactions"]
+                                 if i["flow"] != "main"]
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("main", r.stderr)
+
+    # --- all: both documents or neither, on an ordinary write failure ---
+
+    def test_finding_all_leaves_the_diagram_untouched_when_md_is_unwritable(self):
+        model = rich_model()
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        puml = tmp / "architecture.puml"
+        puml.write_text("@startuml\n' previous\n@enduml\n")
+        locked = tmp / "locked"
+        locked.mkdir()
+        md = locked / "ARCHITECTURE.md"
+        md.write_text("# previous\n")
+        locked.chmod(0o500)
+        self.addCleanup(locked.chmod, 0o700)
+        r = run_py(["all", "--model", write_model(tmp, model),
+                    "--puml-out", puml, "--md-out", md, "--root", root,
+                    "--scope", "x", "--date", "2020-01-02",
+                    "--commit", "deadbee"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(puml.read_text(), "@startuml\n' previous\n@enduml\n")
 
 
 if __name__ == "__main__":
