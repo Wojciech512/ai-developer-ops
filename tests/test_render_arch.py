@@ -6,7 +6,35 @@ dogfooding tasks, so the suite is green on a fresh checkout.
 import json
 import unittest
 
-from tests.util import fixture_root, model_fixture, temp_dir
+from tests.util import (
+    fixture_root,
+    model_fixture,
+    run_py,
+    temp_dir,
+    write_model,
+)
+
+
+class ValidateCase(unittest.TestCase):
+    """Runs `render_arch.py validate` on a model built from the fixture."""
+
+    def validate(self, model):
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        return run_py(["validate", "--model", write_model(tmp, model),
+                       "--root", root])
+
+    def assertRejected(self, model, *needles):
+        r = self.validate(model)
+        self.assertEqual(r.returncode, 1, f"expected rejection\n{r.stderr}")
+        for needle in needles:
+            self.assertIn(needle, r.stderr)
+        return r
+
+    def assertAccepted(self, model):
+        r = self.validate(model)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r
 
 
 class Fixtures(unittest.TestCase):
@@ -55,6 +83,131 @@ class Fixtures(unittest.TestCase):
                          for p in root.rglob("*") if p.is_file())
         expected = sorted(c["path"] for c in model["components"] if c["path"])
         self.assertEqual(created, expected)
+
+
+class ValidateSchema(ValidateCase):
+    """design.md -> 'Model architektury (schemat)': one test per rule."""
+
+    def test_validate_schema_accepts_the_fixture(self):
+        self.assertAccepted(model_fixture())
+
+    def test_validate_schema_rejects_missing_title(self):
+        model = model_fixture()
+        del model["title"]
+        self.assertRejected(model, "title")
+
+    def test_validate_schema_rejects_missing_components(self):
+        model = model_fixture()
+        del model["components"]
+        self.assertRejected(model, "components")
+
+    def test_validate_schema_rejects_empty_components(self):
+        self.assertRejected(model_fixture(components=[]), "components")
+
+    def test_validate_schema_rejects_empty_flows(self):
+        self.assertRejected(model_fixture(flows=[]), "flows")
+
+    def test_validate_schema_rejects_empty_interactions(self):
+        self.assertRejected(model_fixture(interactions=[]), "interactions")
+
+    def test_validate_schema_rejects_unknown_top_level_field(self):
+        self.assertRejected(model_fixture(extra="x"), "extra")
+
+    def test_validate_schema_rejects_unknown_component_field(self):
+        model = model_fixture()
+        model["components"][1]["extra"] = "x"
+        self.assertRejected(model, "extra")
+
+    def test_validate_schema_rejects_unknown_flow_field(self):
+        model = model_fixture()
+        model["flows"][0]["extra"] = "x"
+        self.assertRejected(model, "extra")
+
+    def test_validate_schema_rejects_unknown_interaction_field(self):
+        model = model_fixture()
+        model["interactions"][0]["extra"] = "x"
+        self.assertRejected(model, "extra")
+
+    def test_validate_schema_rejects_component_id_outside_pattern(self):
+        model = model_fixture()
+        model["components"][1]["id"] = "installer"
+        model["interactions"][0]["to"] = "installer"
+        self.assertRejected(model, "installer")
+
+    def test_validate_schema_rejects_duplicate_component_id(self):
+        model = model_fixture()
+        model["components"].append(dict(model["components"][1]))
+        self.assertRejected(model, "Installer")
+
+    def test_validate_schema_rejects_duplicate_flow_id(self):
+        model = model_fixture()
+        model["flows"].append({"id": "main", "label": "Druga",
+                               "kind": "independent"})
+        self.assertRejected(model, "main")
+
+    def test_validate_schema_rejects_layer_outside_vocabulary(self):
+        model = model_fixture()
+        model["components"][1]["layer"] = "middleware"
+        self.assertRejected(model, "middleware")
+
+    def test_validate_schema_rejects_flow_kind_outside_vocabulary(self):
+        model = model_fixture()
+        model["flows"][0]["kind"] = "background"
+        self.assertRejected(model, "background")
+
+    def test_validate_schema_rejects_zero_main_flows(self):
+        model = model_fixture()
+        model["flows"][0]["kind"] = "independent"
+        self.assertRejected(model, "main")
+
+    def test_validate_schema_rejects_two_main_flows(self):
+        model = model_fixture()
+        model["flows"].append({"id": "second", "label": "Druga",
+                               "kind": "main"})
+        self.assertRejected(model, "main")
+
+    def test_validate_schema_rejects_interaction_flow_without_a_flow(self):
+        model = model_fixture()
+        model["interactions"][0]["flow"] = "ghost"
+        self.assertRejected(model, "ghost")
+
+    def test_validate_schema_rejects_interaction_from_without_a_component(self):
+        model = model_fixture()
+        model["interactions"][0]["from"] = "Ghost"
+        self.assertRejected(model, "Ghost")
+
+    def test_validate_schema_rejects_interaction_to_without_a_component(self):
+        model = model_fixture()
+        model["interactions"][0]["to"] = "Ghost"
+        self.assertRejected(model, "Ghost")
+
+    def test_validate_schema_rejects_float_seq(self):
+        model = model_fixture()
+        model["interactions"][0]["seq"] = 10.5
+        self.assertRejected(model, "seq")
+
+    def test_validate_schema_rejects_string_seq(self):
+        model = model_fixture()
+        model["interactions"][0]["seq"] = "10"
+        self.assertRejected(model, "seq")
+
+    def test_validate_schema_rejects_bool_seq(self):
+        model = model_fixture()
+        model["interactions"][0]["seq"] = True
+        self.assertRejected(model, "seq")
+
+    def test_validate_schema_rejects_missing_interaction_field(self):
+        model = model_fixture()
+        del model["interactions"][0]["verb"]
+        self.assertRejected(model, "verb")
+
+    def test_validate_schema_rejects_malformed_json(self):
+        tmp = temp_dir(self)
+        path = tmp / "broken.json"
+        path.write_text("{not json")
+        r = run_py(["validate", "--model", path, "--root", tmp])
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("JSON", r.stderr)
 
 
 if __name__ == "__main__":
