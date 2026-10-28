@@ -13,6 +13,18 @@ def tool_input(path):
     return json.dumps({"tool_input": {"file_path": path}})
 
 
+def command_input(cmd):
+    return json.dumps({"tool_input": {"command": cmd}})
+
+
+def no_jq_env(tmp):
+    """stub_env with jq hidden from PATH (jq lives in /usr/bin on this box)."""
+    env = stub_env(tmp)
+    kept = [p for p in env["PATH"].split(":") if p != "/usr/bin"]
+    env["PATH"] = ":".join(kept)
+    return env
+
+
 def commit_all(repo, env):
     subprocess.run(["git", "add", "-A"], cwd=repo, env=env, check=True)
     subprocess.run(
@@ -52,6 +64,172 @@ class ProtectPaths(unittest.TestCase):
 
     def test_empty_input_allows(self):
         r = self.run_hook("{}")
+        self.assertEqual(r.returncode, 0)
+
+
+class DenyPush(unittest.TestCase):
+    def run_hook(self, stdin, env=None):
+        tmp = temp_dir(self)
+        env = env or stub_env(tmp)
+        return run_script(SCRIPTS / "deny-push.sh", env, stdin=stdin)
+
+    # --- blocking: moves code to a remote ---
+
+    def test_blocks_git_push(self):
+        r = self.run_hook(command_input("git push"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_git_push_origin_head(self):
+        r = self.run_hook(command_input("git push origin HEAD:main"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_git_push_url(self):
+        r = self.run_hook(
+            command_input("git push https://github.com/x/y.git HEAD:main")
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_git_push_upstream(self):
+        r = self.run_hook(command_input("git push upstream main"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_git_dash_c_push(self):
+        r = self.run_hook(command_input("git -C /tmp/x push"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_chained_make_check_and_push(self):
+        r = self.run_hook(command_input("make check && git push"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_chained_status_semicolon_push(self):
+        r = self.run_hook(command_input("git status; git push"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_gh_pr_create(self):
+        r = self.run_hook(command_input("gh pr create"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_gh_pr_merge(self):
+        r = self.run_hook(command_input("gh pr merge"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_gh_release_create(self):
+        r = self.run_hook(command_input("gh release create"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_glab_mr_create(self):
+        r = self.run_hook(command_input("glab mr create"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_glab_mr_merge(self):
+        r = self.run_hook(command_input("glab mr merge"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_gh_api_post_write(self):
+        r = self.run_hook(
+            command_input("gh api --method POST /repos/o/r/git/refs")
+        )
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_blocks_gh_api_delete(self):
+        r = self.run_hook(command_input("gh api -X DELETE /repos/o/r"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_block_message_mentions_local_commit_and_human(self):
+        r = self.run_hook(command_input("git push"))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("commit", r.stderr.lower())
+        self.assertIn("human", r.stderr.lower())
+
+    # --- passing: local-only or non-write ---
+
+    def test_allows_git_commit(self):
+        r = self.run_hook(command_input("git commit -m x"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_git_commit_message_mentions_push(self):
+        r = self.run_hook(command_input('git commit -m "Dokumentuje git push"'))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_printf_quoted_push(self):
+        r = self.run_hook(command_input("printf '%s' 'git push origin x'"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_git_status(self):
+        r = self.run_hook(command_input("git status"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_git_fetch(self):
+        r = self.run_hook(command_input("git fetch"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_git_log_grep_push(self):
+        r = self.run_hook(command_input("git log --grep=push"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_make_check(self):
+        r = self.run_hook(command_input("make check"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_gh_pr_view(self):
+        r = self.run_hook(command_input("gh pr view 1"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_gh_pr_list(self):
+        r = self.run_hook(command_input("gh pr list"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_gh_api_post_markdown(self):
+        r = self.run_hook(command_input("gh api --method POST /markdown"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_gh_api_get(self):
+        r = self.run_hook(command_input("gh api /repos/o/r"))
+        self.assertEqual(r.returncode, 0)
+
+    def test_allows_empty_input(self):
+        r = self.run_hook("{}")
+        self.assertEqual(r.returncode, 0)
+
+    # --- cannot-evaluate contract ---
+
+    def test_blocks_when_no_jq_and_risky(self):
+        tmp = temp_dir(self)
+        env = no_jq_env(tmp)
+        r = self.run_hook(command_input("git push"), env=env)
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(r.stderr)
+
+    def test_allows_when_no_jq_and_mundane(self):
+        tmp = temp_dir(self)
+        env = no_jq_env(tmp)
+        r = self.run_hook(command_input("make check"), env=env)
+        self.assertEqual(r.returncode, 0)
+
+    def test_unparsable_json_without_indicator_allows(self):
+        r = self.run_hook("not json")
+        self.assertEqual(r.returncode, 0)
+
+    def test_null_command_allows(self):
+        r = self.run_hook('{"tool_input":{"command":null}}')
+        self.assertEqual(r.returncode, 0)
+
+    def test_non_string_command_allows(self):
+        r = self.run_hook('{"tool_input":{"command":123}}')
         self.assertEqual(r.returncode, 0)
 
 
