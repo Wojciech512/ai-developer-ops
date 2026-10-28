@@ -249,6 +249,128 @@ def validate_model(model, root=None):
     return errors
 
 
+LAYER_LABELS = {
+    "actor": "aktor",
+    "ui": "UI",
+    "api": "API",
+    "service": "serwisy",
+    "repository": "repozytoria",
+    "data": "dane",
+    "integration": "integracje",
+}
+
+
+def _layer_index(layer):
+    return LAYERS.index(layer)
+
+
+def participants(model):
+    """Components in render order: layer vocabulary, then id."""
+    return sorted(
+        model["components"],
+        key=lambda c: (_layer_index(c["layer"]), c["id"]),
+    )
+
+
+def ordered_flows(model):
+    """The single main flow first, then independent flows by id."""
+    flows = model["flows"]
+    main = [f for f in flows if f["kind"] == "main"]
+    independent = sorted(
+        (f for f in flows if f["kind"] != "main"), key=lambda f: f["id"]
+    )
+    return main + independent
+
+
+def _message_key(interaction):
+    # seq carries the sequence; the rest are tie-breakers so that two
+    # messages sharing a seq never depend on their order in the file.
+    return (
+        interaction["seq"],
+        interaction["from"],
+        interaction["to"],
+        interaction["verb"],
+        interaction["op"],
+    )
+
+
+def flow_messages(model, flow_id):
+    return sorted(
+        (i for i in model["interactions"] if i["flow"] == flow_id),
+        key=_message_key,
+    )
+
+
+def _declaration(component):
+    keyword = "actor" if component["layer"] == "actor" else "participant"
+    return f'{keyword} "{component["label"]}" as {component["id"]}'
+
+
+def _message(interaction):
+    label = f"{interaction['verb'].strip()} {interaction['op'].strip()}"
+    return f"{interaction['from']} -> {interaction['to']} : {label}"
+
+
+def render_puml(model):
+    """Render the model to PlantUML text. Pure: no clock, no filesystem."""
+    lines = ["@startuml", f"title {model['title']}", ""]
+
+    by_layer = {}
+    for component in participants(model):
+        by_layer.setdefault(component["layer"], []).append(component)
+    for layer in LAYERS:
+        members = by_layer.get(layer)
+        if not members:
+            continue
+        lines.append(f'box "{LAYER_LABELS[layer]}"')
+        # Anchor on the canonical layer key, not the display label: manual
+        # additions are re-attached by this marker, which never changes.
+        lines.append(f"' layer:{layer}")
+        lines.extend(_declaration(c) for c in members)
+        lines.append("end box")
+        lines.append("")
+
+    flows = ordered_flows(model)
+    for flow in flows:
+        messages = flow_messages(model, flow["id"])
+        if flow["kind"] == "main":
+            lines.extend(_message(m) for m in messages)
+            lines.append("")
+            continue
+        lines.append(f"group {flow['label']}")
+        lines.append(f"' flow:{flow['id']}")
+        lines.extend(_message(m) for m in messages)
+        lines.append("end")
+        lines.append("")
+
+    lines.append("@enduml")
+    return "\n".join(lines) + "\n"
+
+
+def _validated(args):
+    """Load and validate, or raise ModelError carrying every violation."""
+    model = load_model(args.model)
+    errors = validate_model(model, Path(args.root))
+    if errors:
+        raise ModelError("\n".join(errors))
+    return model
+
+
+def _write_atomic(path, text):
+    """Write via a sibling temp file then replace, so no reader sees a
+    half-written document."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
+
+
+def cmd_puml(args):
+    model = _validated(args)
+    _write_atomic(args.out, render_puml(model))
+    return 0
+
+
 def cmd_validate(args):
     model = load_model(args.model)
     errors = validate_model(model, Path(args.root))
@@ -267,6 +389,12 @@ def build_parser():
     validate.add_argument("--model", required=True)
     validate.add_argument("--root", default=".")
     validate.set_defaults(func=cmd_validate)
+
+    puml = sub.add_parser("puml", help="render the PlantUML diagram")
+    puml.add_argument("--model", required=True)
+    puml.add_argument("--out", required=True)
+    puml.add_argument("--root", default=".")
+    puml.set_defaults(func=cmd_puml)
 
     return parser
 
