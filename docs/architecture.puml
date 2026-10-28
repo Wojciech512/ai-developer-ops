@@ -1,0 +1,60 @@
+@startuml
+title ai-developer-ops
+
+box "aktor"
+' layer:actor
+actor "developer" as Developer
+end box
+
+box "API"
+' layer:api
+participant "hooks.json" as HookRegistry
+participant "init.sh" as Initializer
+participant "install.sh" as Installer
+participant "pre-push" as PrePushGate
+end box
+
+box "serwisy"
+' layer:service
+participant "detect.sh" as Detector
+participant "protect-paths.sh" as PathGuard
+participant "render_arch.py" as Renderer
+participant "stop-gate.sh" as StopGate
+end box
+
+box "dane"
+' layer:data
+participant "dokumentacja" as Docs
+participant "skille i agenci" as SkillLibrary
+participant "szablony projektu" as Templates
+end box
+
+Developer -> Installer : uruchamia install.sh
+Installer -> Detector : sprawdza wariant CLI
+Installer -> SkillLibrary : linkuje skille i agentow
+Developer -> Initializer : uruchamia init.sh
+Initializer -> Detector : sprawdza wariant CLI
+Initializer -> Templates : kopiuje szablony bez nadpisania
+Initializer -> Developer : raportuje utworzone i zachowane pliki
+
+group Odswiezenie architektury
+' flow:discover
+Developer -> Renderer : uruchamia render_arch.py all
+Renderer -> Docs : zapisuje diagram i legende
+end
+
+group Bramka pre-push
+' flow:prepush
+Developer -> PrePushGate : wypycha galaz
+PrePushGate -> Developer : zwraca werdykt make check
+end
+
+group Hooki sesji Claude
+' flow:session
+HookRegistry -> PathGuard : wywoluje PreToolUse
+PathGuard -> Developer : blokuje edycje chronionych sciezek
+HookRegistry -> StopGate : wywoluje Stop
+StopGate -> Developer : zglasza niezielona bramke
+end
+
+@enduml

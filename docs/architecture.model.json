@@ -1,0 +1,221 @@
+{
+  "title": "ai-developer-ops",
+  "components": [
+    {
+      "id": "Developer",
+      "label": "developer",
+      "layer": "actor",
+      "path": null
+    },
+    {
+      "id": "Installer",
+      "label": "install.sh",
+      "layer": "api",
+      "path": "scripts/install.sh"
+    },
+    {
+      "id": "Initializer",
+      "label": "init.sh",
+      "layer": "api",
+      "path": "scripts/init.sh"
+    },
+    {
+      "id": "HookRegistry",
+      "label": "hooks.json",
+      "layer": "api",
+      "path": "hooks/hooks.json"
+    },
+    {
+      "id": "PrePushGate",
+      "label": "pre-push",
+      "layer": "api",
+      "path": ".githooks/pre-push"
+    },
+    {
+      "id": "Detector",
+      "label": "detect.sh",
+      "layer": "service",
+      "path": "scripts/detect.sh"
+    },
+    {
+      "id": "PathGuard",
+      "label": "protect-paths.sh",
+      "layer": "service",
+      "path": "scripts/protect-paths.sh"
+    },
+    {
+      "id": "StopGate",
+      "label": "stop-gate.sh",
+      "layer": "service",
+      "path": "scripts/stop-gate.sh"
+    },
+    {
+      "id": "Renderer",
+      "label": "render_arch.py",
+      "layer": "service",
+      "path": "scripts/render_arch.py"
+    },
+    {
+      "id": "Templates",
+      "label": "szablony projektu",
+      "layer": "data",
+      "path": "templates"
+    },
+    {
+      "id": "SkillLibrary",
+      "label": "skille i agenci",
+      "layer": "data",
+      "path": "skills"
+    },
+    {
+      "id": "Docs",
+      "label": "dokumentacja",
+      "layer": "data",
+      "path": "docs"
+    }
+  ],
+  "flows": [
+    {
+      "id": "main",
+      "label": "Instalacja i inicjalizacja",
+      "kind": "main"
+    },
+    {
+      "id": "discover",
+      "label": "Odswiezenie architektury",
+      "kind": "independent"
+    },
+    {
+      "id": "prepush",
+      "label": "Bramka pre-push",
+      "kind": "independent"
+    },
+    {
+      "id": "session",
+      "label": "Hooki sesji Claude",
+      "kind": "independent"
+    }
+  ],
+  "interactions": [
+    {
+      "flow": "main",
+      "from": "Developer",
+      "to": "Installer",
+      "verb": "uruchamia",
+      "op": "install.sh",
+      "seq": 10
+    },
+    {
+      "flow": "main",
+      "from": "Installer",
+      "to": "Detector",
+      "verb": "sprawdza",
+      "op": "wariant CLI",
+      "seq": 20
+    },
+    {
+      "flow": "main",
+      "from": "Installer",
+      "to": "SkillLibrary",
+      "verb": "linkuje",
+      "op": "skille i agentow",
+      "seq": 30
+    },
+    {
+      "flow": "main",
+      "from": "Developer",
+      "to": "Initializer",
+      "verb": "uruchamia",
+      "op": "init.sh",
+      "seq": 40
+    },
+    {
+      "flow": "main",
+      "from": "Initializer",
+      "to": "Detector",
+      "verb": "sprawdza",
+      "op": "wariant CLI",
+      "seq": 50
+    },
+    {
+      "flow": "main",
+      "from": "Initializer",
+      "to": "Templates",
+      "verb": "kopiuje",
+      "op": "szablony bez nadpisania",
+      "seq": 60
+    },
+    {
+      "flow": "main",
+      "from": "Initializer",
+      "to": "Developer",
+      "verb": "raportuje",
+      "op": "utworzone i zachowane pliki",
+      "seq": 70
+    },
+    {
+      "flow": "discover",
+      "from": "Developer",
+      "to": "Renderer",
+      "verb": "uruchamia",
+      "op": "render_arch.py all",
+      "seq": 10
+    },
+    {
+      "flow": "discover",
+      "from": "Renderer",
+      "to": "Docs",
+      "verb": "zapisuje",
+      "op": "diagram i legende",
+      "seq": 20
+    },
+    {
+      "flow": "prepush",
+      "from": "Developer",
+      "to": "PrePushGate",
+      "verb": "wypycha",
+      "op": "galaz",
+      "seq": 10
+    },
+    {
+      "flow": "prepush",
+      "from": "PrePushGate",
+      "to": "Developer",
+      "verb": "zwraca",
+      "op": "werdykt make check",
+      "seq": 20
+    },
+    {
+      "flow": "session",
+      "from": "HookRegistry",
+      "to": "PathGuard",
+      "verb": "wywoluje",
+      "op": "PreToolUse",
+      "seq": 10
+    },
+    {
+      "flow": "session",
+      "from": "PathGuard",
+      "to": "Developer",
+      "verb": "blokuje",
+      "op": "edycje chronionych sciezek",
+      "seq": 20
+    },
+    {
+      "flow": "session",
+      "from": "HookRegistry",
+      "to": "StopGate",
+      "verb": "wywoluje",
+      "op": "Stop",
+      "seq": 30
+    },
+    {
+      "flow": "session",
+      "from": "StopGate",
+      "to": "Developer",
+      "verb": "zglasza",
+      "op": "niezielona bramke",
+      "seq": 40
+    }
+  ]
+}
