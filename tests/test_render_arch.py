@@ -685,5 +685,249 @@ class PumlParses(PumlCase):
         self.assertParses(model)
 
 
+class MdCase(unittest.TestCase):
+    """Renders a model to ARCHITECTURE.md and returns the text."""
+
+    def render_md(self, model, extra=(), expect=0, scope="caly repo"):
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        out = tmp / "ARCHITECTURE.md"
+        r = run_py(["md", "--model", write_model(tmp, model), "--out", out,
+                    "--root", root, "--scope", scope, *extra])
+        self.assertEqual(r.returncode, expect, r.stderr or r.stdout)
+        return out.read_text() if expect == 0 else r.stderr
+
+    def headings(self, text, level):
+        prefix = "#" * level + " "
+        return [line[len(prefix):] for line in text.splitlines()
+                if line.startswith(prefix)
+                and not line.startswith(prefix + "#")]
+
+
+class MdFormat(MdCase):
+    """The file has exactly four parts and nothing else."""
+
+    def test_md_format_has_exactly_one_top_heading(self):
+        self.assertEqual(len(self.headings(self.render_md(rich_model()), 1)), 1)
+
+    def test_md_format_has_exactly_two_second_level_headings(self):
+        text = self.render_md(rich_model())
+        self.assertEqual(self.headings(text, 2),
+                         ["Legenda uczestników", "Ostatnia aktualizacja"])
+
+    def test_md_format_has_no_third_level_headings(self):
+        self.assertEqual(self.headings(self.render_md(rich_model()), 3), [])
+
+    def test_md_format_embeds_the_svg_exactly_once(self):
+        text = self.render_md(rich_model())
+        self.assertEqual(text.count("![Diagram sekwencji](architecture.svg)"),
+                         1)
+        self.assertEqual(text.count("!["), 1)
+
+    def test_md_format_uses_a_relative_image_path(self):
+        # docs/architecture.svg would break when viewed inside docs/.
+        self.assertNotIn("](docs/", self.render_md(rich_model()))
+
+    def test_md_format_names_the_project_in_the_title(self):
+        self.assertIn("rich", self.headings(self.render_md(rich_model()), 1)[0])
+
+    def test_md_format_puts_the_image_before_the_legend(self):
+        text = self.render_md(rich_model())
+        self.assertLess(text.index("!["), text.index("## Legenda"))
+
+
+class MdLegend(MdCase):
+    """Every rendered participant has a line; every path is listed."""
+
+    def legend(self, text):
+        body = text.split("## Legenda uczestników", 1)[1]
+        body = body.split("## Ostatnia aktualizacja", 1)[0]
+        return [line for line in body.splitlines() if line.startswith("- ")]
+
+    def test_legend_has_one_line_per_participant(self):
+        text = self.render_md(rich_model())
+        self.assertEqual(len(self.legend(text)), 4)
+
+    def test_legend_names_every_participant(self):
+        text = self.render_md(rich_model())
+        joined = "\n".join(self.legend(text))
+        for label in ("developer", "api", "worker", "store"):
+            self.assertIn(f"**{label}**", joined)
+
+    def test_legend_cites_the_path_of_each_component(self):
+        joined = "\n".join(self.legend(self.render_md(rich_model())))
+        for path in ("scripts/api.sh", "scripts/worker.sh", "templates"):
+            self.assertIn(f"`{path}`", joined)
+
+    def test_legend_gives_the_actor_a_line_without_a_path(self):
+        lines = self.legend(self.render_md(rich_model()))
+        actor = [line for line in lines if "**developer**" in line]
+        self.assertEqual(len(actor), 1)
+        self.assertNotIn("`", actor[0])
+
+    def test_legend_covers_every_path_behind_an_aggregate(self):
+        # 14 components collapse to 11 participants; all 14 paths remain.
+        text = self.render_md(wide_model())
+        joined = "\n".join(self.legend(text))
+        self.assertEqual(len(self.legend(text)), 11)
+        for component in wide_model()["components"]:
+            self.assertIn(f"`{component['path']}`", joined)
+        self.assertEqual(joined.count("src/"), 14)
+
+    def test_legend_keeps_a_path_with_a_space_on_one_line(self):
+        model = rich_model()
+        model["components"][0]["path"] = "scripts/my worker.sh"
+        lines = self.legend(self.render_md(model))
+        match = [line for line in lines if "my worker.sh" in line]
+        self.assertEqual(len(match), 1)
+
+    def test_legend_sorts_aggregate_paths(self):
+        joined = "\n".join(self.legend(self.render_md(wide_model())))
+        aggregate_line = [line for line in joined.splitlines()
+                          if "integracje (4)" in line][0]
+        paths = re.findall(r"`([^`]+)`", aggregate_line)
+        self.assertEqual(paths, sorted(paths))
+
+
+class MdLastUpdate(MdCase):
+    """Date, scope and commit live here and only here."""
+
+    def test_last_update_carries_the_given_date(self):
+        text = self.render_md(rich_model(), ["--date", "2020-01-02"])
+        self.assertIn("2020-01-02", text)
+
+    def test_last_update_carries_the_given_scope(self):
+        text = self.render_md(rich_model(), scope="scripts/ i tests/")
+        self.assertIn("scripts/ i tests/", text)
+
+    def test_last_update_carries_the_given_commit(self):
+        text = self.render_md(rich_model(), ["--commit", "deadbee"])
+        self.assertIn("deadbee", text)
+
+    def test_last_update_defaults_to_today_utc(self):
+        today = datetime.datetime.now(datetime.timezone.utc).date()
+        text = self.render_md(rich_model())
+        self.assertIn(today.isoformat(), text)
+
+    def test_last_update_defaults_to_the_head_commit(self):
+        sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True,
+                             check=True).stdout.strip()
+        self.assertIn(sha, self.render_md(rich_model()))
+
+    def test_last_update_values_are_absent_from_the_diagram(self):
+        tmp = temp_dir(self)
+        model = rich_model()
+        root = fixture_root(tmp, model)
+        model_path = write_model(tmp, model)
+        md = tmp / "ARCHITECTURE.md"
+        puml = tmp / "architecture.puml"
+        self.assertEqual(run_py(["md", "--model", model_path, "--out", md,
+                                 "--root", root, "--scope", "x",
+                                 "--date", "2020-01-02",
+                                 "--commit", "deadbee"]).returncode, 0)
+        self.assertEqual(run_py(["puml", "--model", model_path, "--out", puml,
+                                 "--root", root]).returncode, 0)
+        diagram = puml.read_text()
+        self.assertIn("2020-01-02", md.read_text())
+        self.assertNotIn("2020-01-02", diagram)
+        self.assertNotIn("deadbee", diagram)
+
+
+class Atomic(unittest.TestCase):
+    """design.md -> decision 6: both documents or neither."""
+
+    SENTINEL_PUML = "@startuml\n' previous\n@enduml\n"
+    SENTINEL_MD = "# previous\n"
+
+    def staged(self, model):
+        """A dir holding existing documents plus the model under test."""
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        puml = tmp / "architecture.puml"
+        md = tmp / "ARCHITECTURE.md"
+        puml.write_text(self.SENTINEL_PUML)
+        md.write_text(self.SENTINEL_MD)
+        return tmp, root, write_model(tmp, model), puml, md
+
+    def run_all(self, model_path, root, puml, md, extra=()):
+        return run_py(["all", "--model", model_path, "--puml-out", puml,
+                       "--md-out", md, "--root", root, "--scope", "x",
+                       "--date", "2020-01-02", "--commit", "deadbee",
+                       *extra])
+
+    def test_atomic_writes_both_documents_on_success(self):
+        model = rich_model()
+        _, root, model_path, puml, md = self.staged(model)
+        r = self.run_all(model_path, root, puml, md)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("@startuml", puml.read_text())
+        self.assertNotIn("' previous", puml.read_text())
+        self.assertIn("## Legenda uczestników", md.read_text())
+
+    def test_atomic_leaves_both_documents_untouched_on_a_bad_model(self):
+        model = rich_model()
+        model["interactions"][0]["verb"] = ""
+        _, root, model_path, puml, md = self.staged(model)
+        r = self.run_all(model_path, root, puml, md)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(puml.read_text(), self.SENTINEL_PUML)
+        self.assertEqual(md.read_text(), self.SENTINEL_MD)
+
+    def test_atomic_leaves_both_untouched_when_a_path_is_missing(self):
+        model = rich_model()
+        _, root, model_path, puml, md = self.staged(model)
+        (root / "scripts/worker.sh").unlink()
+        r = self.run_all(model_path, root, puml, md)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(puml.read_text(), self.SENTINEL_PUML)
+        self.assertEqual(md.read_text(), self.SENTINEL_MD)
+
+    def test_atomic_leaves_both_untouched_when_the_commit_cannot_be_read(self):
+        model = rich_model()
+        tmp, root, model_path, puml, md = self.staged(model)
+        # No --commit and a cwd outside any repo: git rev-parse must fail
+        # before either document is written.
+        outside = tmp / "outside"
+        outside.mkdir()
+        r = run_py(["all", "--model", model_path, "--puml-out", puml,
+                    "--md-out", md, "--root", root, "--scope", "x"],
+                   cwd=outside)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertEqual(puml.read_text(), self.SENTINEL_PUML)
+        self.assertEqual(md.read_text(), self.SENTINEL_MD)
+
+    def test_atomic_reports_every_violation_before_writing(self):
+        model = rich_model()
+        model["interactions"][0]["verb"] = ""
+        model["components"][0]["label"] = "a|b"
+        _, root, model_path, puml, md = self.staged(model)
+        r = self.run_all(model_path, root, puml, md)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("verb", r.stderr)
+        self.assertIn("label", r.stderr)
+
+    def test_atomic_leaves_no_temp_file_behind(self):
+        model = rich_model()
+        tmp, root, model_path, puml, md = self.staged(model)
+        self.assertEqual(self.run_all(model_path, root, puml, md).returncode, 0)
+        self.assertEqual([p.name for p in tmp.glob("*.tmp")], [])
+
+    def test_atomic_all_matches_the_single_document_subcommands(self):
+        model = rich_model()
+        tmp, root, model_path, puml, md = self.staged(model)
+        self.assertEqual(self.run_all(model_path, root, puml, md).returncode, 0)
+        both_puml, both_md = puml.read_text(), md.read_text()
+        single_puml = tmp / "single.puml"
+        single_md = tmp / "single.md"
+        run_py(["puml", "--model", model_path, "--out", single_puml,
+                "--root", root])
+        run_py(["md", "--model", model_path, "--out", single_md,
+                "--root", root, "--scope", "x", "--date", "2020-01-02",
+                "--commit", "deadbee"])
+        self.assertEqual(both_puml, single_puml.read_text())
+        self.assertEqual(both_md, single_md.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

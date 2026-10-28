@@ -6,8 +6,10 @@ never analyses project code. See openspec/changes/ops-discover/design.md
 for the frozen schema and the ordering, aggregation and preservation rules.
 """
 import argparse
+import datetime
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -439,6 +441,72 @@ def render_puml(model):
     return "\n".join(lines) + "\n"
 
 
+SVG_NAME = "architecture.svg"
+IMAGE_ALT = "Diagram sekwencji"
+# The actor has no file; its legend entry says where the flow enters instead.
+ACTOR_LEGEND = "wejście użytkownika"
+
+
+def legend_entries(model):
+    """One (label, description) per rendered participant, in render order.
+
+    An aggregate lists every path it covers, so collapsing a layer hides
+    participants from the diagram but never hides files from the legend.
+    """
+    rendered, _ = aggregate(participants(model))
+    entries = []
+    for participant in rendered:
+        covered = participant["covers"]
+        if participant["layer"] == "actor":
+            entries.append((participant["label"], ACTOR_LEGEND))
+            continue
+        paths = sorted(c["path"] for c in covered)
+        entries.append(
+            (participant["label"], ", ".join(f"`{p}`" for p in paths))
+        )
+    return entries
+
+
+def render_md(model, scope, date, commit):
+    """Render ARCHITECTURE.md: title, image, legend, last update. No more."""
+    lines = [
+        f"# Architektura {model['title']}",
+        "",
+        f"![{IMAGE_ALT}]({SVG_NAME})",
+        "",
+        "## Legenda uczestników",
+        "",
+    ]
+    for label, description in legend_entries(model):
+        lines.append(f"- **{label}** — {description}")
+    lines += [
+        "",
+        "## Ostatnia aktualizacja",
+        "",
+        f"- Data: {date}",
+        f"- Zakres: {scope}",
+        f"- Commit: `{commit}`",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _today():
+    return datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+
+
+def _head_commit():
+    result = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise ModelError(
+            "could not read the HEAD commit; pass --commit explicitly"
+        )
+    return result.stdout.strip()
+
+
 def _validated(args):
     """Load and validate, or raise ModelError carrying every violation."""
     model = load_model(args.model)
@@ -460,6 +528,32 @@ def _write_atomic(path, text):
 def cmd_puml(args):
     model = _validated(args)
     _write_atomic(args.out, render_puml(model))
+    return 0
+
+
+def cmd_md(args):
+    model = _validated(args)
+    date = args.date or _today()
+    commit = args.commit or _head_commit()
+    _write_atomic(args.out, render_md(model, args.scope, date, commit))
+    return 0
+
+
+def cmd_all(args):
+    """Render both documents, then write both.
+
+    Validation, git metadata and both renders all happen before the first
+    write, so a failure cannot leave a new diagram beside a stale document.
+    What remains is the gap between two rename calls, not between two
+    renders.
+    """
+    model = _validated(args)
+    date = args.date or _today()
+    commit = args.commit or _head_commit()
+    puml_text = render_puml(model)
+    md_text = render_md(model, args.scope, date, commit)
+    _write_atomic(args.puml_out, puml_text)
+    _write_atomic(args.md_out, md_text)
     return 0
 
 
@@ -487,6 +581,25 @@ def build_parser():
     puml.add_argument("--out", required=True)
     puml.add_argument("--root", default=".")
     puml.set_defaults(func=cmd_puml)
+
+    md = sub.add_parser("md", help="render the Markdown document")
+    md.add_argument("--model", required=True)
+    md.add_argument("--out", required=True)
+    md.add_argument("--scope", required=True)
+    md.add_argument("--date")
+    md.add_argument("--commit")
+    md.add_argument("--root", default=".")
+    md.set_defaults(func=cmd_md)
+
+    every = sub.add_parser("all", help="render both documents together")
+    every.add_argument("--model", required=True)
+    every.add_argument("--puml-out", required=True)
+    every.add_argument("--md-out", required=True)
+    every.add_argument("--scope", required=True)
+    every.add_argument("--date")
+    every.add_argument("--commit")
+    every.add_argument("--root", default=".")
+    every.set_defaults(func=cmd_all)
 
     return parser
 
