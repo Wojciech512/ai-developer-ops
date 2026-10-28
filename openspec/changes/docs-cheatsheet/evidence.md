@@ -151,3 +151,65 @@ PASS/FAIL, liczba BLOCKER/WARN
 PASS/FAIL, liczba BLOCKER/WARN
 ## security
 PASS/FAIL
+
+## review A (poprawność) — /code-review main...HEAD high
+Status: patrz sekcja poniżej (etap 2 ops-review).
+
+## review B (drugi model) — codex adversarial-review --base main
+Model: Codex (gpt-6.1-sol), inny niż autor (Claude Opus 5). Werdykt wejściowy: FAIL / needs-attention.
+
+BLOCKER (README.md:31) — "Review the complete bug fix":
+przy przepisie `ops-review HEAD~1..HEAD` niezacommitowany fix zostaje całkowicie
+nieprzejrzany (zakres wskazuje poprzedni commit), a przy fiksie wielocommitowym
+wcześniejsze commity wypadają z review. `skills/ops-review/SKILL.md:7` przekazuje
+zakres dosłownie, więc nie ma siatki bezpieczeństwa.
+
+Potwierdzenie na żywo (nie przyjęte na słowo):
+    $ git status --porcelain
+     M openspec/changes/docs-cheatsheet/tasks.md
+    $ git diff --name-only HEAD~1..HEAD
+    openspec/changes/docs-cheatsheet/.openspec.yaml
+    openspec/changes/docs-cheatsheet/critique.md
+    openspec/changes/docs-cheatsheet/design.md
+    openspec/changes/docs-cheatsheet/handoff.md
+    openspec/changes/docs-cheatsheet/proposal.md
+    openspec/changes/docs-cheatsheet/tasks.md
+Niezacommitowana zmiana w tasks.md nie trafia do zakresu HEAD~1..HEAD — review
+przeszłoby bez spojrzenia na nią.
+
+Luka w mojej weryfikacji: zadanie 1.5 potwierdziło, że `ops-review` *przyjmuje*
+zakresy `A..B` (składnia), ale nie pytało, czy `HEAD~1..HEAD` jest *właściwym*
+zakresem dla przepisu na buga (semantyka). Etap 4 (drugi model) wyłapał to, czego
+etapy 1-3 nie szukały.
+
+Fix: wiersz 2 tabeli mówi teraz `/ai-developer-ops:ops-review <zakres fiksa>`,
+a kolumna 3 dodaje warunek: "`HEAD~1..HEAD` dopiero gdy cały fix siedzi w ostatnim
+commicie". Poprawione w `design.md` (zamrożone źródło) i w `README.md`.
+
+Uwaga do raportu Codexa: jego `make check` padł (exit 2) z powodu sandboxu bez
+zapisywalnego katalogu tymczasowego — `tests/util.py:31` woła `tempfile.mkdtemp`.
+To artefakt środowiska krytyka, nie regresja. Lokalnie exit 0, 23 testy OK.
+
+## security
+Zakres zmiany: 7 plików Markdown + 3-linijkowy YAML (`skip_specs: true`). Zero kodu
+wykonywalnego, zero skryptów, zero CI, zero manifestów zależności.
+Sprawdzone: dodane linie README bez wzorców `curl|wget|sudo|rm -rf|eval|chmod|base64`
+i bez słów `token|secret|password|api_key` (zero trafień); sześć komend z kolumny 2 to
+slash-commandy Claude/Codex albo prośba w języku naturalnym, nie komendy shella; nowy
+tekst nie osłabia bramek repo (opisuje `make check` i hooki jako wiążące).
+Werdykt: PASS, 0 BLOCKER, 0 WARN. Powierzchnia ataku tej zmiany jest pusta
+z konstrukcji — to wynik zakresowania, nie głębokiej analizy.
+
+## ponowna weryfikacja kryteriów po fiksie BLOCKERA
+    $ diff <frozen design.md> <sekcja README.md>   -> IDENTICAL
+    $ grep '^|' README.md | awk '{n=gsub(/\|/,"|"); print NR": "n}'
+    1..8: po 4 pipes
+    $ awk '/^## Ściągawka/{f=1} f&&/^## Pliki/{exit} f{n++} END{print n}' README.md
+    15          (budżet 40)
+    $ gh api --method POST /markdown -f mode=gfm -f "text=$(cat README.md)"
+    <th> x3, <tr> w <tbody> x6, placeholdery: &lt;id&gt; x3, &lt;cel&gt; x2,
+    &lt;zakres fiksa&gt; x1 — wszystkie zescapowane, żaden nie zjedzony jako tag HTML
+    $ make check
+    exit=0, Ran 23 tests ... OK
+    $ make e2e
+    exit=0, E2E_SMOKE_OK

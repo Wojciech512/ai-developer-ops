@@ -27,7 +27,7 @@ To jest kompletna, zatwierdzona treść sekcji. Zadanie 2.1 i 2.2 wstawia dokła
 | Sytuacja | Wypisujesz | Co się dzieje pod spodem |
 |---|---|---|
 | Zmiana większa niż jedno zdanie | `/ai-developer-ops:ops-feature <id> "<cel>"` | OpenSpec propose -> `ops-critique` -> `using-git-worktrees` + `subagent-driven-development` + TDD -> `ops-review` -> `ops-ship` |
-| Bug | `/superpowers:systematic-debugging`, potem `/ai-developer-ops:ops-review HEAD~1..HEAD` | test odtwarzający -> przyczyna -> fix; cztery etapy review |
+| Bug | `/superpowers:systematic-debugging`, potem `/ai-developer-ops:ops-review <zakres fiksa>` | test odtwarzający -> przyczyna -> fix; cztery etapy review. `HEAD~1..HEAD` dopiero gdy cały fix siedzi w ostatnim commicie |
 | Review czegokolwiek (PR, MR, gałąź, ścieżka) | `/ai-developer-ops:ops-review <cel>` | `/code-review`, security, drugi model |
 | Poprawka na jedno zdanie | zwykła prośba | hooki i `make check` pilnują; TDD z `AGENTS.md` odpala się samo |
 | PR/MR | `/ai-developer-ops:ops-ship <id>` | warunki wstępne, szablon, dowody, boty |
