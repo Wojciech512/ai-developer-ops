@@ -1,6 +1,6 @@
 owner: claude
-status: implementing
+status: in-review
 branch: feat/ops-discover
-next_action: grupy 1-9 z tasks.md, TDD w każdym zadaniu, make check po każdej grupie
+next_action: ops-review ops-discover (bramka 6), potem ops-ship
 blockers: none
 last_update: 2026-10-28 by claude
