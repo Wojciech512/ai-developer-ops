@@ -24,7 +24,7 @@ Agent: 1. `make check` zielone. 2. Review bez BLOCKER. 3. evidence.md uzupełnio
 Człowiek: push gałęzi, otwarcie PR/MR z szablonu, merge.
 
 ## Konwencje
-- Gałęzie: feat/<id>, fix/<id>. Commity: Conventional Commits.
+- Gałęzie: feat/<id>, fix/<id>. Commity: Conventional Commits. Bez trailerów atrybucji AI (`Co-Authored-By: Claude ...`) w commitach ani w treści PR/MR — komunikat kończy się ostatnią linią treści.
 - Bash: `set -euo pipefail`; zgodność z bash 3.2 (macOS) — bez mapfile i tablic asocjacyjnych.
 - `templates/` to źródło prawdy; Makefile/AGENTS.md/CI/hook w korzeniu to kopie z init.sh (dogfooding). Zmianę wprowadź w templates/, potem odśwież kopię.
 - Idempotencja: `cp_if_absent` nigdy nie nadpisuje plików użytkownika; handoff.md i evidence.md w .aidevops/templates/ są nadpisywane celowo przy każdym init.

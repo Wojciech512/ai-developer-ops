@@ -24,5 +24,5 @@ Agent: 1. `make check` zielone. 2. Review bez BLOCKER. 3. evidence.md uzupełnio
 Człowiek: push gałęzi, otwarcie PR/MR z szablonu, merge.
 
 ## Konwencje
-- Gałęzie: feat/<id>, fix/<id>. Commity: Conventional Commits.
+- Gałęzie: feat/<id>, fix/<id>. Commity: Conventional Commits. Bez trailerów atrybucji AI (`Co-Authored-By: Claude ...`) w commitach ani w treści PR/MR — komunikat kończy się ostatnią linią treści.
 - TODO: styl kodu, pułapki, architektura (max 20 linii)
