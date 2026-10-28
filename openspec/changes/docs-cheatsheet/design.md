@@ -12,7 +12,7 @@ Zobacz `proposal.md` — Why. Stan obecny: `README.md` ma 33 linie i sekcje `## 
 - Tabela renderuje się poprawnie na GitHub (GFM), potwierdzone rendererem GitHuba, nie podglądem edytora.
 
 **Non-Goals:**
-- Nie dublujemy sekcji `## Proces` ani `## Stos` — ściągawka jest warstwą "co wpisać", nie drugim opisem procesu.
+- Nie piszemy drugiego prozatorskiego opisu procesu obok `## Proces` ani `## Stos`. Kolumna 3 jest wymagana przez zakres zmiany ("Co się dzieje pod spodem") i celowo nazywa konkretne skille, czego `## Proces` nie robi — to inna wysokość lotu, nie duplikat. Przyjęty koszt: przy zmianie cyklu `ops-feature` trzeba odświeżyć oba miejsca (`README.md:24` i wiersz 1 tabeli).
 - Nie dokumentujemy komend, których użytkownik nie ma po `scripts/install.sh`. Wyjątek dla zależności, które ten skrypt instaluje (`superpowers`, `openspec`/`opsx`, plugin security, plugin `codex`) — ich komendy są prawidłowym wejściem użytkownika i wchodzą do kolumny 2. Komendy wewnętrzne, których użytkownik nie wywołuje sam (`/opsx:propose`, `/opsx:verify`, `/code-review`), występują wyłącznie w kolumnie 3 jako opis tego, co dzieje się pod spodem.
 - Żadnej automatyzacji sprawdzania Markdown w `Makefile` (to byłoby zmianą w skryptach, czyli non-goal z proposala).
 - Nie dopisujemy pełnych reguł pierwszeństwa między sytuacjami. Tabela jest ściągawką, nie drzewem decyzyjnym; jedyne wzmocnienie to klauzula o obowiązkowym teście regresyjnym w akapicie (a).
@@ -28,14 +28,14 @@ To jest kompletna, zatwierdzona treść sekcji. Zadanie 2.1 i 2.2 wstawia dokła
 |---|---|---|
 | Zmiana większa niż jedno zdanie | `/ai-developer-ops:ops-feature <id> "<cel>"` | OpenSpec propose -> `ops-critique` -> `using-git-worktrees` + `subagent-driven-development` + TDD -> `ops-review` -> `ops-ship` |
 | Bug | `/superpowers:systematic-debugging`, potem `/ai-developer-ops:ops-review <zakres fiksa>` | test odtwarzający -> przyczyna -> fix; cztery etapy review. `HEAD~1..HEAD` dopiero gdy cały fix siedzi w ostatnim commicie |
-| Review czegokolwiek (PR, MR, gałąź, ścieżka) | `/ai-developer-ops:ops-review <cel>` | `/code-review`, security, drugi model |
+| Review czegokolwiek (PR, MR, gałąź, ścieżka) | `/ai-developer-ops:ops-review <target>` | `/code-review`, security, drugi model |
 | Poprawka na jedno zdanie | zwykła prośba | hooki i `make check` pilnują; TDD z `AGENTS.md` odpala się samo |
 | PR/MR | `/ai-developer-ops:ops-ship <id>` | warunki wstępne, szablon, dowody, boty |
-| Pytanie o API biblioteki | `use docs-researcher: ...` | Context7 w subagencie |
+| Pytanie o API biblioteki | `@docs-researcher <pytanie>` | Context7 w subagencie |
 
 **Czego nie mieszać.** Jeden plan i tylko jeden: `openspec/changes/<id>/tasks.md` — `superpowers:brainstorming` i `superpowers:writing-plans` odpalaj wyłącznie ręcznie, żeby nie powstał drugi plan, a zmianę prowadzoną przez OpenSpec zamykaj przez `ops-ship`, nie przez `superpowers:finishing-a-development-branch`. Bug zostaje bugiem nawet gdy fix ma jedną linię: test odtwarzający jest obowiązkowy.
 
-**W Codex nie ma Superpowers.** Proces niosą skille `ops-*` z agentami TOML (`worker`, `reviewer`, `tester`, `explorer`, `docs_researcher`), wywołania to `$ops-feature`, `$ops-review`, `$ops-ship`; nie ma `systematic-debugging`, a agent od dokumentacji nazywa się `docs_researcher` z podkreśleniem.
+**W Codex nie ma Superpowers.** Proces niosą skille `ops-*` z agentami TOML (`worker`, `reviewer`, `tester`, `explorer`, `docs_researcher`), wywołania to `$ops-feature`, `$ops-review`, `$ops-ship`. Zamiast `systematic-debugging` regułę buga niesie `AGENTS.md` (najpierw test odtwarzający) plus agent `tester`, a agent od dokumentacji nazywa się `docs_researcher` z podkreśleniem.
 ```
 
 Bilans linii: 1 nagłówek + 1 pusta + 2 wiersze szkieletu tabeli + 6 wierszy danych + 1 pusta + akapit + 1 pusta + akapit = 14 linii. Budżet 40 ma 26 linii zapasu.

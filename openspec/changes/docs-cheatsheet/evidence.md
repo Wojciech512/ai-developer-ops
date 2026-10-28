@@ -153,7 +153,57 @@ PASS/FAIL, liczba BLOCKER/WARN
 PASS/FAIL
 
 ## review A (poprawność) — /code-review main...HEAD high
-Status: patrz sekcja poniżej (etap 2 ops-review).
+7 findings, wszystkie przejrzane wobec HEAD po fiksie BLOCKERA z review B.
+Werdykt wejściowy: FAIL. Po poprawkach: PASS.
+
+WARN 1 (evidence.md:130) — 3.4 oznaczone PASS, choć evidence mówiło wprost, że
+scratch nie został usunięty, a `tasks.md:24` wymieniał usunięcie jako część
+warunku PASS. Zasadne: wewnętrzna sprzeczność artefaktów. Fix: scratch usunięty,
+sekcja zakresu niżej odtworzona.
+
+WARN 2 (README.md:35) — `use docs-researcher: ...` nie jest udokumentowaną składnią
+wywołania subagenta. Zweryfikowane niezależnie przez agenta claude-code-guide wobec
+code.claude.com/docs/en/sub-agents.md: udokumentowaną formą gwarantującą dispatch
+jest `@<nazwa>`, cytat "This ensures that specific subagent runs rather than leaving
+the choice to Claude". Forma `use X: ...` to zwykły język naturalny bez parsera.
+Zasadne i istotne, bo kolumna nazywa się "Wypisujesz".
+Fix: wiersz 6 to `@docs-researcher <pytanie>`.
+
+WARN 3 (README.md:39) — akapit o Codeksie mówił, czego nie ma, bez zamiennika dla
+wiersza "Bug". Zasadne; to niedomknięta część WARN 4 z `critique.md`.
+Fix: akapit (b) wskazuje teraz `AGENTS.md` (najpierw test odtwarzający) i agenta
+`tester` jako ścieżkę w Codeksie.
+
+WARN 4 (README.md:32) — kolizja placeholderów: `<cel>` w wierszu 1 znaczy "cel
+zmiany" (tekst swobodny), a w wierszu 3 "cel review" (PR/gałąź/zakres/ścieżka).
+Zasadne. Fix: wiersz 3 używa `<target>`, dokładnie tak jak `argument-hint`
+w `skills/ops-review/SKILL.md`. Po fiksie `<cel>` występuje raz, w jednym znaczeniu.
+
+NOTE 5 (README.md:30) — kolumna 3 wiersza 1 opisuje ten sam przepływ co `## Proces`.
+Częściowo zasadne. Kolumna 3 jest wymagana zakresem zmiany, a `## Proces` jest prozą
+bez nazw skilli — inna wysokość lotu. Odrzucam zmianę deliverable'a; poprawiam
+natomiast zbyt szeroko sformułowany non-goal w `design.md`, który sam sobie przeczył.
+Pozostaje przyjęty koszt: przy zmianie cyklu `ops-feature` odświeżyć oba miejsca.
+
+NOTE 6 (design.md:72) — brak automatycznej ochrony przed rozjazdem README ze
+skillami. Zasadne i już udokumentowane jako ryzyko rezydualne; domknięcie wymaga
+testu w `tests/`, czyli non-goalu. Bez zmian, świadomie.
+
+ODRZUCONE (handoff.md:4) — "cztery etapy" miało być nieprawdą przy `skip_specs`.
+Nie zgadzam się: `skills/ops-review/SKILL.md` wiąże etap 1 z istnieniem *spec folderu*
+(`openspec/changes/docs-cheatsheet/`), który istnieje, i etap 1 faktycznie się wykonał
+(`/opsx:verify` → 13/13 zadań, design adherence 6/6, checki spec-zależne Not applicable
+z racji `skip_specs`). Cztery etapy przebiegły. Słuszna była natomiast obserwacja, że
+`evidence.md` nie miało wyniku etapu 1 — uzupełnione sekcją niżej.
+
+## etap 1 (spec) — /opsx:verify docs-cheatsheet
+Completeness: 13/13 zadań (`taskTrackingConfigured: true`, `remaining: 0`,
+`unavailableTrackingFiles: null`, state `all_done`). Spec Coverage: Not applicable
+(`specs` ma status `skipped` przez `skip_specs: true`).
+Correctness: Not applicable (zero requirementów ADDED/MODIFIED).
+Coherence: Design Adherence 6/6 decyzji potwierdzonych; Code Pattern Consistency bez
+odchyleń (polska proza + dosłowne identyfikatory, `->` jak w `README.md:24`, poziom `##`).
+Werdykt: PASS, 0 BLOCKER, 0 WARN.
 
 ## review B (drugi model) — codex adversarial-review --base main
 Model: Codex (gpt-6.1-sol), inny niż autor (Claude Opus 5). Werdykt wejściowy: FAIL / needs-attention.
@@ -213,3 +263,33 @@ z konstrukcji — to wynik zakresowania, nie głębokiej analizy.
     exit=0, Ran 23 tests ... OK
     $ make e2e
     exit=0, E2E_SMOKE_OK
+
+## ponowna weryfikacja po fiksach z review A
+    $ diff <frozen design.md> <sekcja README.md>   -> IDENTICAL
+    $ awk '/^## Ściągawka/{f=1} f&&/^## Pliki/{exit} f{n++} END{print n}' README.md
+    15          (budżet 40)
+    $ grep '^|' README.md | awk '{n=gsub(/\|/,"|"); print NR": "n}'
+    1..8: po 4 pipes
+    $ gh api --method POST /markdown -f mode=gfm -f "text=$(cat README.md)"
+    <th> x3, <tr> w <tbody> x6
+    placeholdery zescapowane: &lt;id&gt; x3, &lt;cel&gt; x1, &lt;target&gt; x1,
+    &lt;pytanie&gt; x1, &lt;zakres fiksa&gt; x1
+    (&lt;projekt&gt; x2 to istniejąca treść README, nie ta zmiana)
+    kolizja `<cel>` zamknięta: występuje raz, w jednym znaczeniu
+    $ make check
+    exit=0, Ran 23 tests ... OK
+
+## zakres końcowy (zadanie 3.4, odtworzone po usunięciu scratchu)
+    $ git diff --name-only 7afdda8a51ed22b05356b4c5ce4e39d840ed1624
+    README.md
+    openspec/changes/docs-cheatsheet/.openspec.yaml
+    openspec/changes/docs-cheatsheet/critique.md
+    openspec/changes/docs-cheatsheet/design.md
+    openspec/changes/docs-cheatsheet/evidence.md
+    openspec/changes/docs-cheatsheet/handoff.md
+    openspec/changes/docs-cheatsheet/proposal.md
+    openspec/changes/docs-cheatsheet/tasks.md
+`README.md` jest jedynym plikiem produkcyjnym; pozostałe to artefakty tej zmiany.
+Scratch (`.superpowers/`) usunięty — warunek z `tasks.md:24` spełniony realnie,
+nie tylko zadeklarowany. `.tmp/` nigdy nie istniał w tym worktree (był w głównym
+checkoucie). `.idea/misc.xml` nietknięty.
