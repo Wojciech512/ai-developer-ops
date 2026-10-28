@@ -210,5 +210,50 @@ class ValidateSchema(ValidateCase):
         self.assertIn("JSON", r.stderr)
 
 
+class ValidatePaths(ValidateCase):
+    """path existence, the actor exception, and the reserved id suffix."""
+
+    def test_validate_paths_rejects_a_path_absent_from_the_root(self):
+        model = model_fixture()
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        model["components"][1]["path"] = "scripts/ghost.sh"
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("scripts/ghost.sh", r.stderr)
+
+    def test_validate_paths_accepts_a_directory_path(self):
+        # Build the root from the fixture first so scripts/ is a real
+        # directory, then point the component at the directory itself.
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model_fixture())
+        self.assertTrue((root / "scripts").is_dir())
+        model = model_fixture()
+        model["components"][1]["path"] = "scripts"
+        r = run_py(["validate", "--model", write_model(tmp, model),
+                    "--root", root])
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_validate_paths_rejects_null_path_outside_the_actor_layer(self):
+        model = model_fixture()
+        model["components"][1]["path"] = None
+        self.assertRejected(model, "Installer")
+
+    def test_validate_paths_rejects_a_path_on_an_actor(self):
+        model = model_fixture()
+        model["components"][0]["path"] = "scripts/install.sh"
+        self.assertRejected(model, "Developer")
+
+    def test_validate_paths_accepts_an_actor_with_a_null_path(self):
+        self.assertAccepted(model_fixture())
+
+    def test_validate_paths_rejects_an_id_ending_in_group(self):
+        model = model_fixture()
+        model["components"][1]["id"] = "PaymentGroup"
+        model["interactions"][0]["to"] = "PaymentGroup"
+        self.assertRejected(model, "PaymentGroup", "Group")
+
+
 if __name__ == "__main__":
     unittest.main()

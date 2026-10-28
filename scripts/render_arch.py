@@ -9,6 +9,7 @@ import argparse
 import json
 import re
 import sys
+from pathlib import Path
 
 # Fixed order. Participant order and box order both derive from this, so the
 # layout cannot depend on the order entries happen to appear in the model.
@@ -59,7 +60,7 @@ def _check_fields(entry, allowed, where, errors):
     return not unknown and not missing
 
 
-def _validate_components(model, errors):
+def _validate_components(model, errors, root):
     components = model.get("components")
     if not isinstance(components, list) or not components:
         errors.append("components: must be a non-empty list")
@@ -91,7 +92,34 @@ def _validate_components(model, errors):
                 f"{where}: layer {component['layer']!r} is not one of "
                 f"{', '.join(LAYERS)}"
             )
+        _validate_component_path(component, where, root, errors)
     return components
+
+
+def _validate_component_path(component, where, root, errors):
+    """A path is required and must exist, except on the actor layer."""
+    cid = component.get("id")
+    path = component["path"]
+    if component.get("layer") == "actor":
+        if path is not None:
+            errors.append(
+                f"{where}: component {cid!r} is on the actor layer and must "
+                f"have path null, got {path!r}"
+            )
+        return
+    if path is None:
+        errors.append(
+            f"{where}: component {cid!r} is on layer "
+            f"{component.get('layer')!r} and must declare a path"
+        )
+        return
+    if not isinstance(path, str) or not path:
+        errors.append(f"{where}: path {path!r} must be a non-empty string")
+        return
+    if root is not None and not (root / path).exists():
+        errors.append(
+            f"{where}: path {path!r} does not exist under {root}"
+        )
 
 
 def _validate_flows(model, errors):
@@ -161,13 +189,13 @@ def _validate_interactions(model, errors, component_ids, flow_ids):
     return interactions
 
 
-def validate_model(model):
+def validate_model(model, root=None):
     """Return every schema violation in model, as a list of strings."""
     errors = []
     if not isinstance(model, dict):
         return ["model: must be a JSON object"]
     _check_fields(model, TOP_FIELDS, "model", errors)
-    components = _validate_components(model, errors)
+    components = _validate_components(model, errors, root)
     flows = _validate_flows(model, errors)
     component_ids = {
         c["id"] for c in components if isinstance(c, dict) and "id" in c
@@ -179,7 +207,7 @@ def validate_model(model):
 
 def cmd_validate(args):
     model = load_model(args.model)
-    errors = validate_model(model)
+    errors = validate_model(model, Path(args.root))
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
