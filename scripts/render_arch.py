@@ -282,6 +282,85 @@ def ordered_flows(model):
     return main + independent
 
 
+MAX_PARTICIPANTS = 12
+
+
+def aggregate(components):
+    """Collapse whole layers until at most MAX_PARTICIPANTS remain.
+
+    Returns (participants, mapping). Each participant carries `covers`: the
+    original components it stands for, so the legend can list every path
+    without re-deriving it. mapping sends an original id to its rendered id.
+
+    Collapsing a whole layer overshoots the limit (14 components laid out
+    4/4/3/3 land on 11), which is why the limit is a ceiling rather than an
+    exact count. The layer chosen is the fullest one; ties go to the layer
+    later in LAYERS, because overflow is usually integrations.
+    """
+    buckets = {}
+    for component in components:
+        buckets.setdefault(component["layer"], []).append(component)
+    collapsed = set()
+
+    def total():
+        return sum(
+            1 if layer in collapsed else len(members)
+            for layer, members in buckets.items()
+        )
+
+    while total() > MAX_PARTICIPANTS:
+        candidates = [
+            (len(members), _layer_index(layer), layer)
+            for layer, members in buckets.items()
+            if layer not in collapsed and len(members) > 1
+        ]
+        if not candidates:
+            break
+        candidates.sort()
+        collapsed.add(candidates[-1][2])
+
+    participants = []
+    mapping = {}
+    for layer in LAYERS:
+        members = sorted(buckets.get(layer, []), key=lambda c: c["id"])
+        if not members:
+            continue
+        if layer in collapsed:
+            aggregate_id = f"{layer.capitalize()}{AGGREGATE_SUFFIX}"
+            participants.append({
+                "id": aggregate_id,
+                "label": f"{LAYER_LABELS[layer]} ({len(members)})",
+                "layer": layer,
+                "covers": members,
+            })
+            for member in members:
+                mapping[member["id"]] = aggregate_id
+            continue
+        for member in members:
+            participants.append({
+                "id": member["id"],
+                "label": member["label"],
+                "layer": layer,
+                "covers": [member],
+            })
+            mapping[member["id"]] = member["id"]
+    return participants, mapping
+
+
+def _dedupe_adjacent(messages):
+    """Drop a message identical to the one immediately before it.
+
+    Only adjacent duplicates: a flow that performs the same operation twice,
+    separated by another message, keeps both occurrences.
+    """
+    kept = []
+    for message in messages:
+        if kept and kept[-1] == message:
+            continue
+        kept.append(message)
+    return kept
+
+
 def _message_key(interaction):
     # seq carries the sequence; the rest are tie-breakers so that two
     # messages sharing a seq never depend on their order in the file.
@@ -301,23 +380,37 @@ def flow_messages(model, flow_id):
     )
 
 
-def _declaration(component):
-    keyword = "actor" if component["layer"] == "actor" else "participant"
-    return f'{keyword} "{component["label"]}" as {component["id"]}'
+def _declaration(participant):
+    keyword = "actor" if participant["layer"] == "actor" else "participant"
+    return f'{keyword} "{participant["label"]}" as {participant["id"]}'
 
 
-def _message(interaction):
+def _message(interaction, mapping):
     label = f"{interaction['verb'].strip()} {interaction['op'].strip()}"
-    return f"{interaction['from']} -> {interaction['to']} : {label}"
+    source = mapping[interaction["from"]]
+    target = mapping[interaction["to"]]
+    return f"{source} -> {target} : {label}"
+
+
+def _rendered_messages(model, flow_id, mapping):
+    """Messages of one flow, in order, with aggregates applied.
+
+    An interaction whose two ends collapsed into the same aggregate becomes
+    a self-message rather than disappearing: dropping it would change the
+    number of steps the flow performs.
+    """
+    ordered = flow_messages(model, flow_id)
+    return _dedupe_adjacent([_message(m, mapping) for m in ordered])
 
 
 def render_puml(model):
     """Render the model to PlantUML text. Pure: no clock, no filesystem."""
+    rendered, mapping = aggregate(participants(model))
     lines = ["@startuml", f"title {model['title']}", ""]
 
     by_layer = {}
-    for component in participants(model):
-        by_layer.setdefault(component["layer"], []).append(component)
+    for participant in rendered:
+        by_layer.setdefault(participant["layer"], []).append(participant)
     for layer in LAYERS:
         members = by_layer.get(layer)
         if not members:
@@ -326,20 +419,19 @@ def render_puml(model):
         # Anchor on the canonical layer key, not the display label: manual
         # additions are re-attached by this marker, which never changes.
         lines.append(f"' layer:{layer}")
-        lines.extend(_declaration(c) for c in members)
+        lines.extend(_declaration(p) for p in members)
         lines.append("end box")
         lines.append("")
 
-    flows = ordered_flows(model)
-    for flow in flows:
-        messages = flow_messages(model, flow["id"])
+    for flow in ordered_flows(model):
+        messages = _rendered_messages(model, flow["id"], mapping)
         if flow["kind"] == "main":
-            lines.extend(_message(m) for m in messages)
+            lines.extend(messages)
             lines.append("")
             continue
         lines.append(f"group {flow['label']}")
         lines.append(f"' flow:{flow['id']}")
-        lines.extend(_message(m) for m in messages)
+        lines.extend(messages)
         lines.append("end")
         lines.append("")
 

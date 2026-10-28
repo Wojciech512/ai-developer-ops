@@ -6,6 +6,7 @@ dogfooding tasks, so the suite is green on a fresh checkout.
 import datetime
 import json
 import re
+import shutil
 import subprocess
 import unittest
 
@@ -522,6 +523,166 @@ class PumlStructure(PumlCase):
 
     def test_puml_structure_carries_the_title(self):
         self.assertIn("title rich", self.render(rich_model()))
+
+
+def wide_model(counts=(("integration", 4), ("service", 4),
+                       ("api", 3), ("data", 3))):
+    """A model with one component per (layer, index), 14 by default."""
+    stems = {"integration": "Int", "service": "Svc", "api": "Api",
+             "data": "Data", "ui": "Ui", "repository": "Repo"}
+    components = []
+    for layer, count in counts:
+        stem = stems[layer]
+        for index in range(count):
+            cid = f"{stem}{chr(ord('A') + index)}"
+            components.append({
+                "id": cid,
+                "label": cid.lower(),
+                "layer": layer,
+                "path": f"src/{layer}/{cid.lower()}.py",
+            })
+    return {
+        "title": "wide",
+        "components": components,
+        "flows": [{"id": "main", "label": "Glowny", "kind": "main"}],
+        "interactions": [{
+            "flow": "main", "from": components[0]["id"],
+            "to": components[-1]["id"], "verb": "wola", "op": "handle",
+            "seq": 10,
+        }],
+    }
+
+
+class PumlAggregation(PumlCase):
+    """design.md -> decision 3. The limit is a ceiling, not an exact count."""
+
+    def declarations(self, text):
+        return re.findall(r"^(?:participant|actor) \"(.+?)\" as (\w+)$",
+                          text, re.MULTILINE)
+
+    def test_aggregation_keeps_participants_within_the_limit(self):
+        text = self.render(wide_model())
+        self.assertLessEqual(len(self.declarations(text)), 12)
+
+    def test_aggregation_produces_at_least_one_aggregate(self):
+        text = self.render(wide_model())
+        aggregates = [i for _, i in self.declarations(text)
+                      if i.endswith("Group")]
+        self.assertTrue(aggregates, "expected an aggregate participant")
+
+    def test_aggregation_collapses_the_fullest_layer_latest_in_the_order(self):
+        # integration and service both hold 4; integration is later in the
+        # layer vocabulary, so it is the one that collapses.
+        text = self.render(wide_model())
+        ids = [i for _, i in self.declarations(text)]
+        self.assertIn("IntegrationGroup", ids)
+        self.assertNotIn("ServiceGroup", ids)
+        for svc in ("SvcA", "SvcB", "SvcC", "SvcD"):
+            self.assertIn(svc, ids)
+
+    def test_aggregation_labels_the_aggregate_with_its_member_count(self):
+        text = self.render(wide_model())
+        labels = dict((i, lbl) for lbl, i in self.declarations(text))
+        self.assertEqual(labels["IntegrationGroup"], "integracje (4)")
+
+    def test_aggregation_leaves_twelve_components_untouched(self):
+        model = wide_model((("integration", 3), ("service", 3),
+                            ("api", 3), ("data", 3)))
+        text = self.render(model)
+        ids = [i for _, i in self.declarations(text)]
+        self.assertEqual(len(ids), 12)
+        self.assertFalse([i for i in ids if i.endswith("Group")])
+
+    def test_aggregation_repoints_interactions_at_the_aggregate(self):
+        text = self.render(wide_model())
+        # IntA collapsed; the message must now leave IntegrationGroup.
+        self.assertIn("IntegrationGroup -> DataC : wola handle", text)
+
+    def test_aggregation_turns_an_internal_interaction_into_a_self_message(self):
+        model = wide_model()
+        model["interactions"] = [{
+            "flow": "main", "from": "IntA", "to": "IntB",
+            "verb": "wola", "op": "handle", "seq": 10,
+        }]
+        text = self.render(model)
+        self.assertIn("IntegrationGroup -> IntegrationGroup : wola handle",
+                      text)
+
+    def test_aggregation_keeps_a_repeat_separated_by_another_message(self):
+        model = wide_model()
+        model["interactions"] = [
+            {"flow": "main", "from": "IntA", "to": "DataA",
+             "verb": "wola", "op": "handle", "seq": 10},
+            {"flow": "main", "from": "IntB", "to": "DataA",
+             "verb": "czyta", "op": "config", "seq": 20},
+            {"flow": "main", "from": "IntC", "to": "DataA",
+             "verb": "wola", "op": "handle", "seq": 30},
+        ]
+        text = self.render(model)
+        self.assertEqual(
+            text.count("IntegrationGroup -> DataA : wola handle"), 2)
+
+    def test_aggregation_collapses_only_adjacent_duplicates(self):
+        model = wide_model()
+        model["interactions"] = [
+            {"flow": "main", "from": "IntA", "to": "DataA",
+             "verb": "wola", "op": "handle", "seq": 10},
+            {"flow": "main", "from": "IntB", "to": "DataA",
+             "verb": "wola", "op": "handle", "seq": 20},
+        ]
+        text = self.render(model)
+        self.assertEqual(
+            text.count("IntegrationGroup -> DataA : wola handle"), 1)
+
+    def test_aggregation_collapses_repeatedly_until_within_the_limit(self):
+        model = wide_model((("integration", 8), ("service", 8),
+                            ("api", 2), ("data", 2)))
+        text = self.render(model)
+        ids = [i for _, i in self.declarations(text)]
+        self.assertLessEqual(len(ids), 12)
+        self.assertIn("IntegrationGroup", ids)
+        self.assertIn("ServiceGroup", ids)
+
+
+@unittest.skipUnless(shutil.which("plantuml"), "plantuml not on PATH")
+class PumlParses(PumlCase):
+    """Real PlantUML must accept what we generate, not just our regexes."""
+
+    def assertParses(self, model):
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        out = tmp / "architecture.puml"
+        r = run_py(["puml", "--model", write_model(tmp, model),
+                    "--out", out, "--root", root])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        check = subprocess.run(
+            ["plantuml", "-failfast2", "-checkonly", str(out)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(check.returncode, 0,
+                         f"{check.stdout}\n{check.stderr}\n{out.read_text()}")
+
+    def test_parses_the_minimal_fixture(self):
+        self.assertParses(model_fixture())
+
+    def test_parses_a_model_with_several_flows(self):
+        self.assertParses(rich_model())
+
+    def test_parses_a_model_with_an_aggregate(self):
+        self.assertParses(wide_model())
+
+    def test_parses_a_self_message_from_an_aggregate(self):
+        model = wide_model()
+        model["interactions"] = [{
+            "flow": "main", "from": "IntA", "to": "IntB",
+            "verb": "wola", "op": "handle", "seq": 10,
+        }]
+        self.assertParses(model)
+
+    def test_parses_a_label_with_allowed_punctuation(self):
+        model = rich_model()
+        model["components"][0]["label"] = "worker.sh (v2): a-b_c, d/e"
+        self.assertParses(model)
 
 
 if __name__ == "__main__":
