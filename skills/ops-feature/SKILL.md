@@ -12,4 +12,4 @@ Three human gates: proposal, plan, merge. Stop at each one and wait.
 5. Verify: `make e2e`; use playwright-cli for the verification steps in the spec; record results in evidence.md.
 6. Review: run ops-review for <id>. The owner fixes every BLOCKER and WARN, then reruns until PASS.
 7. Ship: run ops-ship for <id>. STOP: the user merges.
-8. After merge: `/opsx:archive <id>`; add one lesson to AGENTS.md if there is one.
+8. After merge: `/opsx:archive <id>`. Then refresh the architecture from the scope ops-ship recorded: read `openspec/changes/archive/<id>/scope.txt` and run ops-discover --refresh --scope with those paths. Empty or missing file: skip the refresh and say so - do not rediscover the whole repo. Then `make docs`, and commit the changed documents as `docs(architecture): refresh after <id>`; if the default branch is protected, push `docs/refresh-<id>` and open a PR/MR from the template. This step is not done until the working tree is clean. Finally add one lesson to AGENTS.md if there is one.

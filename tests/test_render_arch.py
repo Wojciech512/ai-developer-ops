@@ -1586,5 +1586,73 @@ class SyntheticRepo(unittest.TestCase):
             self.assertTrue((project / path).exists())
 
 
+class Integrations(unittest.TestCase):
+    """init, ops-ship, ops-feature and AGENTS.md must agree on the flow."""
+
+    def read(self, relative):
+        return (REPO / relative).read_text()
+
+    def test_init_delegates_recon_to_ops_discover(self):
+        text = self.read("skills/init/SKILL.md")
+        self.assertIn("ops-discover --onboarding", text)
+
+    def test_init_no_longer_describes_its_own_recon(self):
+        text = self.read("skills/init/SKILL.md")
+        self.assertNotIn("Claude: Explore; Codex: explorer", text)
+        self.assertNotIn("max 2 pages", text)
+
+    def test_init_takes_project_commands_from_the_report(self):
+        step = [ln for ln in self.read("skills/init/SKILL.md").splitlines()
+                if ln.startswith("4.")][0]
+        self.assertIn("ops-discover report", step)
+
+    def test_init_reports_a_kept_makefile_as_a_human_step(self):
+        step = [ln for ln in self.read("skills/init/SKILL.md").splitlines()
+                if ln.startswith("7.")][0]
+        self.assertIn("docs-fresh", step)
+        self.assertIn("Makefile", step)
+
+    def test_ops_ship_records_the_scope_before_pushing(self):
+        text = self.read("skills/ops-ship/SKILL.md")
+        self.assertIn("scope.txt", text)
+        self.assertIn("--diff-filter=ACMRD", text)
+        self.assertLess(text.index("scope.txt"), text.index("git push"))
+
+    def test_ops_ship_explains_why_scope_cannot_wait_for_merge(self):
+        text = self.read("skills/ops-ship/SKILL.md")
+        self.assertIn("merge-base", text)
+        self.assertIn("empty", text)
+
+    def test_ops_feature_refreshes_from_the_recorded_scope(self):
+        text = self.read("skills/ops-feature/SKILL.md")
+        self.assertIn("ops-discover --refresh --scope", text)
+        self.assertIn("archive/<id>/scope.txt", text)
+
+    def test_ops_feature_does_not_recompute_scope_after_merge(self):
+        # The post-merge diff is always empty; computing it there was the
+        # blocker ops-critique found.
+        text = self.read("skills/ops-feature/SKILL.md")
+        self.assertNotIn("merge-base", text)
+
+    def test_ops_feature_owns_the_refresh_commit(self):
+        text = self.read("skills/ops-feature/SKILL.md")
+        self.assertIn("docs(architecture): refresh after", text)
+        self.assertIn("working tree is clean", text)
+
+    def test_agents_template_points_at_the_diagram(self):
+        for name in ("templates/AGENTS.md", "AGENTS.md"):
+            with self.subTest(name=name):
+                line = [ln for ln in self.read(name).splitlines()
+                        if "docs/ARCHITECTURE.md" in ln]
+                self.assertEqual(len(line), 1, name)
+                self.assertIn("ops-discover", line[0])
+
+    def test_agents_template_stays_within_its_budget(self):
+        for name in ("templates/AGENTS.md", "AGENTS.md"):
+            with self.subTest(name=name):
+                lines = self.read(name).splitlines()
+                self.assertLessEqual(len(lines), 60, f"{name}: {len(lines)}")
+
+
 if __name__ == "__main__":
     unittest.main()
