@@ -27,4 +27,7 @@ echo "$out2" | grep -q "kept    AGENTS.md"
 [ -x .githooks/pre-push ]
 bash .githooks/pre-push
 
+grep -q 'nie pushuje na żadne zdalne' AGENTS.md
+grep -q 'Bash(git push\*)' .claude/settings.json
+
 echo "E2E_SMOKE_OK"
