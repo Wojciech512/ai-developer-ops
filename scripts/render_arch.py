@@ -405,9 +405,21 @@ def _rendered_messages(model, flow_id, mapping):
     return _dedupe_adjacent([_message(m, mapping) for m in ordered])
 
 
-def render_puml(model):
+def render_puml(model, manual=()):
     """Render the model to PlantUML text. Pure: no clock, no filesystem."""
     rendered, mapping = aggregate(participants(model))
+    rendered_ids = {p["id"] for p in rendered}
+    flows = ordered_flows(model)
+    buckets, orphans = _partition_manual(
+        manual,
+        rendered_ids,
+        {p["layer"] for p in rendered},
+        {f["id"] for f in flows},
+    )
+
+    def manual_for(section):
+        return [e.live_line() for e in buckets.get(section, [])]
+
     lines = ["@startuml", f"title {model['title']}", ""]
 
     by_layer = {}
@@ -422,23 +434,170 @@ def render_puml(model):
         # additions are re-attached by this marker, which never changes.
         lines.append(f"' layer:{layer}")
         lines.extend(_declaration(p) for p in members)
+        lines.extend(manual_for(("layer", layer)))
         lines.append("end box")
         lines.append("")
 
-    for flow in ordered_flows(model):
+    for flow in flows:
         messages = _rendered_messages(model, flow["id"], mapping)
         if flow["kind"] == "main":
             lines.extend(messages)
+            lines.extend(manual_for(("body", None)))
             lines.append("")
             continue
         lines.append(f"group {flow['label']}")
         lines.append(f"' flow:{flow['id']}")
         lines.extend(messages)
+        lines.extend(manual_for(("flow", flow["id"])))
         lines.append("end")
+        lines.append("")
+
+    if orphans:
+        # Commented out on purpose: a live message naming a participant that
+        # no longer exists would make PlantUML invent one, pushing past the
+        # participant limit and past the legend.
+        lines.extend(e.orphan_line() for e in orphans)
         lines.append("")
 
     lines.append("@enduml")
     return "\n".join(lines) + "\n"
+
+
+# A manual addition is marked by a trailing comment. Orphans keep a distinct
+# marker so a disabled line stays recognisable across refreshes instead of
+# being re-commented every run.
+MANUAL_MARKER = "' manual"
+ORPHAN_MARKER = "' manual-orphan"
+
+# Manual additions may not restructure the diagram: a declaration could push
+# past the participant limit or slip past the legend, and an activation could
+# unbalance the file.
+MANUAL_FORBIDDEN = (
+    "participant", "actor", "box", "end box", "group", "end",
+    "activate", "deactivate", "@startuml", "@enduml",
+)
+MANUAL_ALLOWED = (
+    "a message (A -> B : text, A --> B : text), "
+    "a note (note left of X : text, note right of X : text), "
+    "or a full-line comment ('...)"
+)
+
+MANUAL_MESSAGE_RE = re.compile(r"^(\w+)\s*-{1,2}>\s*(\w+)\s*:\s*\S")
+MANUAL_NOTE_RE = re.compile(r"^note\s+(?:left|right)\s+of\s+(\w+)\s*:\s*\S")
+
+
+class ManualLine:
+    """A manual addition, its section, and the ids it refers to."""
+
+    def __init__(self, content, section, orphaned):
+        self.content = content
+        self.section = section
+        self.orphaned = orphaned
+
+    def references(self):
+        message = MANUAL_MESSAGE_RE.match(self.content)
+        if message:
+            return [message.group(1), message.group(2)]
+        note = MANUAL_NOTE_RE.match(self.content)
+        if note:
+            return [note.group(1)]
+        return []
+
+    def live_line(self):
+        return f"{self.content} {MANUAL_MARKER}"
+
+    def orphan_line(self):
+        return f"' {self.content} {ORPHAN_MARKER}"
+
+
+def _manual_content(line):
+    """Return (content, orphaned) for a manual line, or None."""
+    stripped = line.strip()
+    if stripped.endswith(ORPHAN_MARKER):
+        content = stripped[: -len(ORPHAN_MARKER)].rstrip()
+        # Orphans are stored commented out; drop that leading marker.
+        if content.startswith("'"):
+            content = content[1:].strip()
+        return content, True
+    if stripped.endswith(MANUAL_MARKER):
+        return stripped[: -len(MANUAL_MARKER)].rstrip(), False
+    return None
+
+
+def parse_manual(text):
+    """Collect manual lines from an existing .puml with their sections.
+
+    Sections are identified by the ' layer:<layer> and ' flow:<id> anchors
+    the renderer emits, never by display labels: a label can change while
+    the anchor cannot.
+    """
+    manual = []
+    section = ("body", None)
+    for line in text.splitlines():
+        stripped = line.strip()
+        parsed = _manual_content(line)
+        if parsed is not None:
+            content, orphaned = parsed
+            if content:
+                manual.append(ManualLine(content, section, orphaned))
+            continue
+        if stripped.startswith("' layer:"):
+            section = ("layer", stripped[len("' layer:"):])
+        elif stripped.startswith("' flow:"):
+            section = ("flow", stripped[len("' flow:"):])
+        elif stripped in ("end box", "end"):
+            section = ("body", None)
+    return manual
+
+
+def validate_manual(manual):
+    """Return every manual line that breaks the closed syntax."""
+    errors = []
+    for entry in manual:
+        if entry.orphaned:
+            # Already disabled; its text is carried, not executed.
+            continue
+        content = entry.content
+        head = content.split()[0] if content.split() else ""
+        two = " ".join(content.split()[:2])
+        if head in MANUAL_FORBIDDEN or two in MANUAL_FORBIDDEN:
+            errors.append(
+                f"manual line {content!r} starts with {head!r}, which may "
+                f"not be added by hand; allowed: {MANUAL_ALLOWED}"
+            )
+            continue
+        if content.startswith("'"):
+            continue
+        if MANUAL_MESSAGE_RE.match(content) or MANUAL_NOTE_RE.match(content):
+            continue
+        errors.append(
+            f"manual line {content!r} is not one of: {MANUAL_ALLOWED}"
+        )
+    return errors
+
+
+def _partition_manual(manual, rendered_ids, layers, flow_ids):
+    """Split manual lines into per-section buckets plus orphans."""
+    buckets = {}
+    orphans = []
+    for entry in manual:
+        kind, key = entry.section
+        unknown_refs = [
+            ref for ref in entry.references() if ref not in rendered_ids
+        ]
+        homeless = (
+            entry.orphaned
+            or (kind == "layer" and key not in layers)
+            or (kind == "flow" and key not in flow_ids)
+        )
+        if homeless or unknown_refs:
+            orphans.append(entry)
+            continue
+        buckets.setdefault(entry.section, []).append(entry)
+    for lines in buckets.values():
+        lines.sort(key=lambda e: e.content)
+    orphans.sort(key=lambda e: e.content)
+    return buckets, orphans
 
 
 SVG_NAME = "architecture.svg"
@@ -507,6 +666,30 @@ def _head_commit():
     return result.stdout.strip()
 
 
+def _manual_or_empty(preserve):
+    """Parse manual additions without raising, for validate's error list."""
+    if not preserve:
+        return []
+    path = Path(preserve)
+    if not path.exists():
+        return []
+    return parse_manual(path.read_text(encoding="utf-8"))
+
+
+def _load_manual(preserve):
+    """Read manual additions from an existing diagram, if there is one."""
+    if not preserve:
+        return []
+    path = Path(preserve)
+    if not path.exists():
+        return []
+    manual = parse_manual(path.read_text(encoding="utf-8"))
+    errors = validate_manual(manual)
+    if errors:
+        raise ModelError("\n".join(errors))
+    return manual
+
+
 def _validated(args):
     """Load and validate, or raise ModelError carrying every violation."""
     model = load_model(args.model)
@@ -527,7 +710,8 @@ def _write_atomic(path, text):
 
 def cmd_puml(args):
     model = _validated(args)
-    _write_atomic(args.out, render_puml(model))
+    manual = _load_manual(args.preserve)
+    _write_atomic(args.out, render_puml(model, manual))
     return 0
 
 
@@ -550,7 +734,8 @@ def cmd_all(args):
     model = _validated(args)
     date = args.date or _today()
     commit = args.commit or _head_commit()
-    puml_text = render_puml(model)
+    manual = _load_manual(args.preserve)
+    puml_text = render_puml(model, manual)
     md_text = render_md(model, args.scope, date, commit)
     _write_atomic(args.puml_out, puml_text)
     _write_atomic(args.md_out, md_text)
@@ -560,6 +745,7 @@ def cmd_all(args):
 def cmd_validate(args):
     model = load_model(args.model)
     errors = validate_model(model, Path(args.root))
+    errors += validate_manual(_manual_or_empty(args.preserve))
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
@@ -574,12 +760,14 @@ def build_parser():
     validate = sub.add_parser("validate", help="check the model, write nothing")
     validate.add_argument("--model", required=True)
     validate.add_argument("--root", default=".")
+    validate.add_argument("--preserve")
     validate.set_defaults(func=cmd_validate)
 
     puml = sub.add_parser("puml", help="render the PlantUML diagram")
     puml.add_argument("--model", required=True)
     puml.add_argument("--out", required=True)
     puml.add_argument("--root", default=".")
+    puml.add_argument("--preserve")
     puml.set_defaults(func=cmd_puml)
 
     md = sub.add_parser("md", help="render the Markdown document")
@@ -599,6 +787,7 @@ def build_parser():
     every.add_argument("--date")
     every.add_argument("--commit")
     every.add_argument("--root", default=".")
+    every.add_argument("--preserve")
     every.set_defaults(func=cmd_all)
 
     return parser

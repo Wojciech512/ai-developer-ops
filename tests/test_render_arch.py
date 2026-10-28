@@ -929,5 +929,328 @@ class Atomic(unittest.TestCase):
         self.assertEqual(both_md, single_md.read_text())
 
 
+MANUAL = "' manual"
+ORPHAN = "' manual-orphan"
+
+
+class PreserveCase(unittest.TestCase):
+    """Round-trips a .puml through --preserve with manual lines inserted."""
+
+    def baseline(self, model):
+        tmp = temp_dir(self)
+        root = fixture_root(tmp, model)
+        puml = tmp / "architecture.puml"
+        r = run_py(["puml", "--model", write_model(tmp, model),
+                    "--out", puml, "--root", root])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return tmp, root, puml
+
+    def insert_after(self, puml, anchor, *lines):
+        text = puml.read_text().splitlines()
+        index = text.index(anchor)
+        for offset, line in enumerate(lines, start=1):
+            text.insert(index + offset, line)
+        puml.write_text("\n".join(text) + "\n")
+
+    def insert_before(self, puml, anchor, *lines):
+        text = puml.read_text().splitlines()
+        index = text.index(anchor)
+        for line in lines:
+            text.insert(index, line)
+            index += 1
+        puml.write_text("\n".join(text) + "\n")
+
+    def represerve(self, model, tmp, root, puml, expect=0):
+        out = tmp / "next.puml"
+        r = run_py(["puml", "--model", write_model(tmp, model), "--out", out,
+                    "--root", root, "--preserve", puml])
+        self.assertEqual(r.returncode, expect, r.stderr)
+        return out.read_text() if expect == 0 else r.stderr
+
+    def section_of(self, text, line):
+        """Which anchored section a line sits in, by walking the file."""
+        section = "body"
+        for current in text.splitlines():
+            if current.startswith("' layer:"):
+                section = current
+            elif current.startswith("' flow:"):
+                section = current
+            elif current in ("end box", "end"):
+                section = "body"
+            if current == line:
+                return section
+        self.fail(f"line not found: {line}")
+
+
+class ManualSections(PreserveCase):
+    """design.md -> decision 5: anchors, not labels, carry attribution."""
+
+    def test_manual_sections_returns_a_comment_to_its_box(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        line = f"' uwaga o api {MANUAL}"
+        self.insert_before(puml, "end box", line)
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn(line, text)
+        self.assertEqual(self.section_of(text, line), "' layer:actor")
+
+    def test_manual_sections_returns_a_message_to_its_group(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        line = f"Worker -> Store : czysci cache {MANUAL}"
+        self.insert_after(puml, "' flow:cron", line)
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn(line, text)
+        self.assertEqual(self.section_of(text, line), "' flow:cron")
+
+    def test_manual_sections_returns_a_message_to_the_body(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        line = f"Api -> Store : loguje audyt {MANUAL}"
+        self.insert_after(puml, "Developer -> Api : uruchamia discover", line)
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn(line, text)
+        self.assertEqual(self.section_of(text, line), "body")
+
+    def test_manual_sections_sorts_several_lines_in_one_section(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        lines = [f"Worker -> Store : zeta {MANUAL}",
+                 f"Worker -> Store : alfa {MANUAL}",
+                 f"Worker -> Store : beta {MANUAL}"]
+        self.insert_after(puml, "' flow:cron", *lines)
+        text = self.represerve(model, tmp, root, puml)
+        positions = [text.index(line) for line in sorted(lines)]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_manual_sections_survives_a_flow_label_change(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        line = f"Worker -> Store : czysci cache {MANUAL}"
+        self.insert_after(puml, "' flow:cron", line)
+        for flow in model["flows"]:
+            if flow["id"] == "cron":
+                flow["label"] = "Zupelnie inna nazwa"
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn(line, text)
+        self.assertEqual(self.section_of(text, line), "' flow:cron")
+        self.assertNotIn(ORPHAN, text)
+
+    def test_manual_sections_keeps_a_note(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        line = f"note right of Worker : kolejka {MANUAL}"
+        self.insert_after(puml, "' flow:cron", line)
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn(line, text)
+
+
+class ManualSyntax(PreserveCase):
+    """The closed syntax from decision 5."""
+
+    FORBIDDEN = ["participant X", "actor X", "box \"X\"", "end box",
+                 "group X", "end", "activate X", "deactivate X",
+                 "@startuml", "@enduml"]
+
+    def test_manual_syntax_rejects_every_structural_keyword(self):
+        for construct in self.FORBIDDEN:
+            with self.subTest(construct=construct):
+                model = rich_model()
+                tmp, root, puml = self.baseline(model)
+                line = f"{construct} {MANUAL}"
+                self.insert_after(puml, "' flow:cron", line)
+                stderr = self.represerve(model, tmp, root, puml, expect=1)
+                self.assertIn(construct.split()[0], stderr)
+
+    def test_manual_syntax_error_lists_the_allowed_forms(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron", f"participant Ghost {MANUAL}")
+        stderr = self.represerve(model, tmp, root, puml, expect=1)
+        for form in ("->", "note", "'"):
+            self.assertIn(form, stderr)
+
+    def test_manual_syntax_rejects_a_participant_declaration_in_a_box(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_before(puml, "end box", f'participant "g" as Ghost {MANUAL}')
+        stderr = self.represerve(model, tmp, root, puml, expect=1)
+        self.assertIn("participant", stderr)
+
+    def test_manual_syntax_accepts_a_label_without_a_verb(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        line = f"Api -> Store : cache {MANUAL}"
+        self.insert_after(puml, "' flow:cron", line)
+        self.assertIn(line, self.represerve(model, tmp, root, puml))
+
+    def test_manual_syntax_accepts_a_dashed_arrow(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        line = f"Api --> Store : odpowiada cache {MANUAL}"
+        self.insert_after(puml, "' flow:cron", line)
+        self.assertIn(line, self.represerve(model, tmp, root, puml))
+
+
+class ManualOrphan(PreserveCase):
+    """A manual line whose home is gone is kept, commented out."""
+
+    def declarations(self, text):
+        return re.findall(r"^(?:participant|actor) ", text, re.MULTILINE)
+
+    def test_orphan_preserves_a_line_whose_flow_disappeared(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Worker -> Store : czysci cache {MANUAL}")
+        model["flows"] = [f for f in model["flows"] if f["id"] != "cron"]
+        model["interactions"] = [i for i in model["interactions"]
+                                 if i["flow"] != "cron"]
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn("czysci cache", text)
+        self.assertIn(ORPHAN, text)
+
+    def test_orphan_is_commented_out(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Worker -> Store : czysci cache {MANUAL}")
+        model["flows"] = [f for f in model["flows"] if f["id"] != "cron"]
+        model["interactions"] = [i for i in model["interactions"]
+                                 if i["flow"] != "cron"]
+        text = self.represerve(model, tmp, root, puml)
+        orphan_line = [ln for ln in text.splitlines() if ORPHAN in ln][0]
+        self.assertTrue(orphan_line.startswith("'"), orphan_line)
+
+    def test_orphan_sits_before_enduml(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Worker -> Store : czysci cache {MANUAL}")
+        model["flows"] = [f for f in model["flows"] if f["id"] != "cron"]
+        model["interactions"] = [i for i in model["interactions"]
+                                 if i["flow"] != "cron"]
+        text = self.represerve(model, tmp, root, puml)
+        self.assertLess(text.index(ORPHAN), text.index("@enduml"))
+
+    def test_orphan_does_not_add_a_participant(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        before = len(self.declarations(puml.read_text()))
+        self.insert_after(puml, "' flow:cron",
+                          f"Ghost -> Phantom : wola nic {MANUAL}")
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn(ORPHAN, text)
+        self.assertEqual(len(self.declarations(text)), before)
+
+    def test_orphan_catches_a_reference_to_a_collapsed_component(self):
+        model = wide_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' layer:data",
+                          f"IntA -> DataA : wola stare {MANUAL}")
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn(ORPHAN, text)
+        self.assertIn("wola stare", text)
+
+    def test_orphan_sorts_several_orphans(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Ghost -> Phantom : zeta {MANUAL}",
+                          f"Ghost -> Phantom : alfa {MANUAL}")
+        text = self.represerve(model, tmp, root, puml)
+        orphans = [ln for ln in text.splitlines() if ORPHAN in ln]
+        self.assertEqual(orphans, sorted(orphans))
+
+    def test_orphan_removed_component_leaves_puml_and_legend(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        model["components"] = [c for c in model["components"]
+                               if c["id"] != "Store"]
+        model["interactions"] = [i for i in model["interactions"]
+                                 if "Store" not in (i["from"], i["to"])]
+        text = self.represerve(model, tmp, root, puml)
+        self.assertNotIn("as Store", text)
+        md = tmp / "ARCHITECTURE.md"
+        r = run_py(["md", "--model", write_model(tmp, model), "--out", md,
+                    "--root", root, "--scope", "x", "--date", "2020-01-02",
+                    "--commit", "deadbee"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("**store**", md.read_text())
+
+
+@unittest.skipUnless(shutil.which("plantuml"), "plantuml not on PATH")
+class PreserveParses(PreserveCase):
+    """Preserved output, orphans included, must still be valid PlantUML."""
+
+    def assertParses(self, tmp, text):
+        path = tmp / "preserved.puml"
+        path.write_text(text)
+        check = subprocess.run(
+            ["plantuml", "-failfast2", "-checkonly", str(path)],
+            capture_output=True, text=True,
+        )
+        self.assertEqual(check.returncode, 0,
+                         f"{check.stdout}\n{check.stderr}\n{text}")
+
+    def test_preserve_parses_with_a_live_manual_line(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Worker -> Store : czysci cache {MANUAL}")
+        self.assertParses(tmp, self.represerve(model, tmp, root, puml))
+
+    def test_preserve_parses_with_an_orphan(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Ghost -> Phantom : wola nic {MANUAL}")
+        text = self.represerve(model, tmp, root, puml)
+        self.assertIn(ORPHAN, text)
+        self.assertParses(tmp, text)
+
+    def test_preserve_parses_with_a_comment_in_a_box(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_before(puml, "end box", f"' uwaga {MANUAL}")
+        self.assertParses(tmp, self.represerve(model, tmp, root, puml))
+
+
+class PreserveIdempotent(PreserveCase):
+    """Repeated refresh must not drift or accumulate."""
+
+    def test_preserve_idempotent_without_manual_lines(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        first = puml.read_text()
+        self.assertEqual(self.represerve(model, tmp, root, puml), first)
+
+    def test_preserve_idempotent_with_manual_lines(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Worker -> Store : czysci cache {MANUAL}")
+        first = self.represerve(model, tmp, root, puml)
+        puml.write_text(first)
+        second = self.represerve(model, tmp, root, puml)
+        self.assertEqual(first, second)
+        puml.write_text(second)
+        self.assertEqual(self.represerve(model, tmp, root, puml), second)
+
+    def test_preserve_idempotent_with_orphans(self):
+        model = rich_model()
+        tmp, root, puml = self.baseline(model)
+        self.insert_after(puml, "' flow:cron",
+                          f"Ghost -> Phantom : wola nic {MANUAL}")
+        first = self.represerve(model, tmp, root, puml)
+        puml.write_text(first)
+        second = self.represerve(model, tmp, root, puml)
+        self.assertEqual(first, second)
+        puml.write_text(second)
+        third = self.represerve(model, tmp, root, puml)
+        self.assertEqual(second, third)
+        self.assertEqual(third.count(ORPHAN), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
